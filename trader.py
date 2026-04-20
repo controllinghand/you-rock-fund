@@ -4,7 +4,7 @@ import math
 from datetime import datetime, timezone
 from ib_insync import IB, Option, LimitOrder, MarketOrder
 
-from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, ACCOUNT
+from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, ACCOUNT, NUM_POSITIONS, TOTAL_FUND_BUDGET
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,11 +16,13 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-MAX_SPREAD_PCT    = 0.20
-MIN_OPEN_INTEREST = 100
-MID_WAIT_SECS     = 120
-BID_WAIT_SECS     = 120
-DRY_RUN           = False   # ← flip to False when ready to go live
+MAX_SPREAD_PCT      = 0.20
+MIN_OPEN_INTEREST   = 100
+MID_WAIT_SECS       = 120
+BID_WAIT_SECS       = 120
+MARKET_WAIT_SECS    = 60    # total polling window for market orders
+MARKET_POLL_SECS    = 5     # check every N seconds
+DRY_RUN             = False
 
 
 def connect() -> IB:
@@ -79,7 +81,6 @@ def get_market_data(ib: IB, contract, screener_premium: float) -> dict | None:
     if is_nan(bid) or is_nan(ask) or bid <= 0 or ask <= 0:
         log.warning(f"  ⏰ No market data for {contract.symbol} — market likely closed")
         if DRY_RUN:
-            # Simulate with screener premium for dry run testing
             simulated_bid = round(screener_premium * 0.90, 2)
             simulated_ask = round(screener_premium * 1.10, 2)
             simulated_mid = screener_premium
@@ -166,62 +167,149 @@ def place_order_with_escalation(ib: IB, contract, contracts: int,
     if try_limit(mkt["mid"], "limit_mid", MID_WAIT_SECS): return result
     if try_limit(mkt["bid"], "limit_bid", BID_WAIT_SECS): return result
 
+    # Market order with polling loop — options can partially fill across multiple exchanges
     log.info(f"  📤 Market order: SELL {contracts}x {ticker} PUT")
     order = MarketOrder("SELL", contracts, account=ACCOUNT, tif="DAY")
     trade = ib.placeOrder(contract, order)
-    ib.sleep(5)
-    if trade.orderStatus.status == "Filled":
+
+    elapsed = 0
+    while elapsed < MARKET_WAIT_SECS:
+        ib.sleep(MARKET_POLL_SECS)
+        elapsed += MARKET_POLL_SECS
+        status      = trade.orderStatus.status
+        filled_qty  = trade.orderStatus.filled
+        remaining   = trade.orderStatus.remaining
+
+        if status == "Filled" or (remaining == 0 and filled_qty > 0):
+            fill = trade.orderStatus.avgFillPrice
+            log.info(f"  ✅ Market order filled {ticker} @ ${fill:.2f} "
+                     f"({filled_qty} contracts in {elapsed}s)")
+            result.update({
+                "status": "filled",
+                "fill_price": fill,
+                "order_type": "market",
+                "premium_collected": round(filled_qty * fill * 100, 2)
+            })
+            return result
+
+        if status == "PartiallyFilled" and filled_qty > 0:
+            log.info(f"  ⏳ Partial: {filled_qty}/{contracts} filled after {elapsed}s — waiting...")
+        else:
+            log.info(f"  ⏳ Market status: {status} after {elapsed}s — waiting...")
+
+    # Accept whatever partial fill arrived before timeout
+    final_qty = trade.orderStatus.filled
+    if final_qty > 0:
         fill = trade.orderStatus.avgFillPrice
+        log.warning(f"  ⚠️  Partial fill accepted: {final_qty}/{contracts} @ ${fill:.2f}")
         result.update({
-            "status": "filled", "fill_price": fill,
+            "status": "partial_fill",
+            "fill_price": fill,
             "order_type": "market",
-            "premium_collected": round(contracts * fill * 100, 2)
+            "premium_collected": round(final_qty * fill * 100, 2)
         })
     else:
         log.error(f"  ❌ Could not fill {ticker} — manual review needed")
         result["status"] = "failed"
+
     return result
 
 
-def execute_positions(sized_positions: list) -> list:
+def execute_positions(sized_positions: list, extra_targets: list = None) -> list:
+    """
+    Execute up to NUM_POSITIONS fills. If a candidate fails qualification,
+    market data, or liquidity, the next-ranked screener target is sized and
+    attempted automatically until the fill target is met or candidates are
+    exhausted.
+
+    extra_targets: full ranked screener list (raw dicts from screener).
+    """
+    from position_sizer import size_position
+
     log.info("\n" + "=" * 65)
     log.info(f"🚀 YOU ROCK VOLATILITY INCOME FUND — Execution Start")
     log.info(f"   Mode: {'🧪 DRY RUN' if DRY_RUN else '🔴 LIVE'}")
     log.info(f"   Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    log.info(f"   Positions: {len(sized_positions)}")
+    log.info(f"   Primary candidates: {len(sized_positions)}  |  "
+             f"Fallback pool: {len(extra_targets or [])}")
     log.info("=" * 65)
 
-    ib      = connect()
-    results = []
+    ib              = connect()
+    results         = []
+    filled_count    = 0
+    capital_deployed = 0
+    attempted       = set()
 
-    for i, pos in enumerate(sized_positions, 1):
-        ticker    = pos["ticker"]
-        strike    = pos["strike"]
-        expiry    = pos["expiry"]
+    # Work through pre-sized primaries first, then size extras on demand
+    primary    = list(sized_positions)
+    extras     = list(extra_targets or [])
+    extra_ptr  = 0
+
+    def next_candidate():
+        nonlocal extra_ptr
+        while primary:
+            p = primary.pop(0)
+            if p["ticker"] not in attempted:
+                return p
+        while extra_ptr < len(extras):
+            raw = extras[extra_ptr]
+            extra_ptr += 1
+            if raw["ticker"] in attempted:
+                continue
+            is_last  = (filled_count == NUM_POSITIONS - 1)
+            remaining = TOTAL_FUND_BUDGET - capital_deployed
+            p = size_position(raw, remaining, is_last=is_last)
+            if p:
+                log.info(f"  🔄 Fallback candidate: {p['ticker']} "
+                         f"({p['contracts']}x @ ${p['strike']:.2f})")
+                return p
+        return None
+
+    slot = 0
+    while filled_count < NUM_POSITIONS:
+        pos = next_candidate()
+        if pos is None:
+            log.warning(f"⚠️  No more candidates — {filled_count}/{NUM_POSITIONS} positions filled")
+            break
+
+        slot    += 1
+        ticker   = pos["ticker"]
+        attempted.add(ticker)
+        strike   = pos["strike"]
+        expiry   = pos["expiry"]
         contracts = pos["contracts"]
-        premium   = pos["premium"]
+        premium  = pos["premium"]
 
-        log.info(f"\n[{i}/{len(sized_positions)}] {ticker} — "
-                 f"{contracts} contracts @ ${strike} strike")
+        log.info(f"\n[attempt {slot}  fill {filled_count + 1}/{NUM_POSITIONS}] "
+                 f"{ticker} — {contracts} contracts @ ${strike:.2f} strike")
 
         contract = get_option_contract(ib, ticker, strike, expiry)
         if not contract:
+            log.info(f"  🔄 {ticker} — qualify failed, trying next candidate")
             results.append({"ticker": ticker, "status": "failed_qualify"})
             continue
 
         mkt = get_market_data(ib, contract, screener_premium=premium)
         if not mkt:
+            log.info(f"  🔄 {ticker} — no market data, trying next candidate")
             results.append({"ticker": ticker, "status": "failed_market_data"})
             continue
 
         if not check_liquidity(mkt, ticker):
+            log.info(f"  🔄 {ticker} — failed liquidity, trying next candidate")
             results.append({"ticker": ticker, "status": "skipped_liquidity"})
             continue
 
         result = place_order_with_escalation(ib, contract, contracts, mkt, ticker)
         results.append(result)
 
-        if i < len(sized_positions):
+        if result["status"] in ("filled", "dry_run", "partial_fill"):
+            filled_count     += 1
+            capital_deployed += pos["capital_used"]
+        else:
+            log.info(f"  🔄 {ticker} — order failed, trying next candidate")
+
+        if filled_count < NUM_POSITIONS:
             ib.sleep(3)
 
     ib.disconnect()
@@ -242,7 +330,8 @@ def execute_positions(sized_positions: list) -> list:
         fill_str = f"@ ${fill:.2f} via {otype} — ${prem:,.0f}{sim_tag}" if fill else ""
         log.info(f"  {r['ticker']:6s}  {status:20s}  {fill_str}")
 
-    log.info(f"\n  Total Premium Collected: ${total_premium:,.0f}")
+    log.info(f"\n  Fills: {filled_count}/{NUM_POSITIONS}  |  "
+             f"Total Premium: ${total_premium:,.0f}")
     log.info("=" * 65)
 
     with open("state.json", "w") as f:
@@ -250,6 +339,7 @@ def execute_positions(sized_positions: list) -> list:
             "run_date":      datetime.now().isoformat(),
             "positions":     sized_positions,
             "executions":    results,
+            "filled_count":  filled_count,
             "total_premium": total_premium
         }, f, indent=2)
     log.info("💾 Results saved to state.json")
@@ -260,6 +350,6 @@ def execute_positions(sized_positions: list) -> list:
 if __name__ == "__main__":
     from screener import get_top_targets
     from position_sizer import size_all
-    targets   = get_top_targets(10)
-    positions = size_all(targets)
-    execute_positions(positions)
+    all_targets = get_top_targets(10)
+    positions   = size_all(all_targets)
+    execute_positions(positions, extra_targets=all_targets)

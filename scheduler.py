@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
+from config import NUM_POSITIONS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,18 +34,18 @@ def run_pipeline():
         from position_sizer import size_all
         from trader import execute_positions
 
-        targets   = get_top_targets(10)
-        if not targets:
+        all_targets = get_top_targets(10)
+        if not all_targets:
             log.error("❌ No targets — aborting"); return
 
-        positions = size_all(targets)
+        positions = size_all(all_targets)
         if not positions:
             log.error("❌ No positions sized — aborting"); return
 
-        results      = execute_positions(positions)
-        filled       = [r for r in results if r.get("status") in ("filled", "dry_run")]
-        total        = sum(r.get("premium_collected", 0) for r in results)
-        log.info(f"\n✅ Done — {len(filled)}/5 positions  |  Premium: ${total:,.0f}")
+        results      = execute_positions(positions, extra_targets=all_targets)
+        filled = [r for r in results if r.get("status") in ("filled", "dry_run", "partial_fill")]
+        total  = sum(r.get("premium_collected", 0) for r in results)
+        log.info(f"\n✅ Done — {len(filled)}/{NUM_POSITIONS} positions  |  Premium: ${total:,.0f}")
 
     except Exception as e:
         log.error(f"❌ Pipeline error: {e}", exc_info=True)
