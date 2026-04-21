@@ -7,11 +7,14 @@
     <key>Label</key>
     <string>com.yourockfund.ibgateway</string>
 
-    <!-- Run the IBC StartGateway.sh wrapper which launches IB Gateway and auto-logs in -->
+    <!-- Run IBC's gatewaystartmacos.sh with -inline so it stays in-process.
+         Without -inline the script spawns a new Terminal window via osascript,
+         which doesn't work under launchd. -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/seanleegreer/IBC/StartGateway.sh</string>
+        <string>/Users/seanleegreer/IBC/gatewaystartmacos.sh</string>
+        <string>-inline</string>
     </array>
 
     <!-- Start on login and keep alive after crashes (not after clean exit) -->

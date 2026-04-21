@@ -165,7 +165,7 @@ echo ""
 echo "${BOLD}Step 3 / 5   Install IBC $IBC_VERSION${NC}"
 echo "──────────────────────────────────────────────────────"
 
-if [ -f "$IBC_DIR/IBCMacos.sh" ] || [ -f "$IBC_DIR/StartGateway.sh" ]; then
+if [ -f "$IBC_DIR/IBC.jar" ] || [ -f "$IBC_DIR/gatewaystartmacos.sh" ]; then
     ok "IBC already installed at $IBC_DIR"
 else
     info "Downloading IBC $IBC_VERSION..."
@@ -200,20 +200,17 @@ sed \
 chmod 600 "$CONFIG_DEST"   # credentials file — owner-read only
 ok "config.ini written (mode 600)"
 
-# ── Configure StartGateway.sh ─────────────────────────────────
-STARTGW="$IBC_DIR/StartGateway.sh"
+# ── Configure gatewaystartmacos.sh ───────────────────────────
+# IBC 3.23.0 ships gatewaystartmacos.sh directly (no .sample copy needed).
+STARTGW="$IBC_DIR/gatewaystartmacos.sh"
+[ -f "$STARTGW" ] || fail "IBC installation missing gatewaystartmacos.sh — re-run setup_ibc.sh"
 
-if [ ! -f "$STARTGW" ]; then
-    # IBC ships a sample — copy and configure it
-    STARTGW_SAMPLE=$(find "$IBC_DIR" -name "StartGateway.sh.sample" 2>/dev/null | head -1 || true)
-    [ -z "$STARTGW_SAMPLE" ] && fail "IBC installation missing StartGateway.sh — re-run setup"
-    cp "$STARTGW_SAMPLE" "$STARTGW"
-fi
-
-# Patch key variables in StartGateway.sh
+# Patch key variables. Variable names changed in IBC 3.x vs older releases:
+#   IBC_INI          — path to config.ini (new; replaces inline credential vars)
+#   TWS_PATH         — parent of versioned install dirs, e.g. ~/Applications
+#   TWS_SETTINGS_PATH — where Gateway stores per-user settings (was TWS_CONFIG_PATH)
 patch_var() {
     local var="$1" val="$2" file="$3"
-    # Handle both quoted and unquoted assignments
     if grep -qE "^${var}=" "$file"; then
         sed -i '' "s|^${var}=.*|${var}=\"${val}\"|" "$file"
     else
@@ -221,16 +218,17 @@ patch_var() {
     fi
 }
 
-patch_var "TWS_MAJOR_VRSN" "$GATEWAY_VERSION_DOT" "$STARTGW"
-patch_var "IBC_PATH"        "$IBC_DIR"           "$STARTGW"
-patch_var "GATEWAY_PATH"    "$GATEWAY_DIR"       "$STARTGW"
-patch_var "TWS_CONFIG_PATH" "$GATEWAY_CONF"      "$STARTGW"
-patch_var "LOG_PATH"        "$IBC_LOG_DIR"      "$STARTGW"
-patch_var "TRADING_MODE"    "$TRADING_MODE"     "$STARTGW"
-patch_var "JAVA_PATH"       ""                  "$STARTGW"
+patch_var "TWS_MAJOR_VRSN"    "$GATEWAY_VERSION_DOT"  "$STARTGW"
+patch_var "IBC_INI"            "$IBC_DIR/config.ini"   "$STARTGW"
+patch_var "TRADING_MODE"       "$TRADING_MODE"         "$STARTGW"
+patch_var "IBC_PATH"           "$IBC_DIR"              "$STARTGW"
+patch_var "TWS_PATH"           "$HOME/Applications"    "$STARTGW"
+patch_var "TWS_SETTINGS_PATH"  "$GATEWAY_CONF"         "$STARTGW"
+patch_var "LOG_PATH"           "$IBC_LOG_DIR"          "$STARTGW"
+patch_var "JAVA_PATH"          ""                      "$STARTGW"
 
 chmod +x "$STARTGW"
-ok "StartGateway.sh configured"
+ok "gatewaystartmacos.sh configured"
 
 # ── Step 5: Install and load launchd plist ────────────────────
 echo ""
