@@ -216,11 +216,18 @@ A dedicated Mac Mini is the recommended setup for set-and-forget automated tradi
 | Network | Ethernet (recommended) | More reliable than WiFi |
 
 ### Shopping List
-- **Mac Mini M4 (16GB/256GB)** — ~$469-599
-  https://www.amazon.com/dp/B0DLKT2MQ4
+- **Mac Mini M4 (16GB/256GB)** — $599 retail, often $469-499 on sale
+  - Amazon: https://www.amazon.com/dp/B0DLBTPDCS
+  - Apple Store: https://www.apple.com/shop/buy-mac/mac-mini
+  - Costco (sometimes cheaper): search "Mac Mini M4" on costco.com
+  - MicroCenter: ~$399 in store (best price if one is nearby)
 - **Ethernet cable** — ~$10 (if needed)
 - **IBKR Account** — Free (paper trading available)
   https://www.interactivebrokers.com
+
+> 💡 **Pro Tip:** Check Amazon weekly — the M4 Mac Mini regularly goes on sale for $469-499. Also check MicroCenter if you have one nearby — they often have it for $399!
+
+> **Note:** M5 Mac Mini expected ~mid 2026 (WWDC June) at the same $599 price — worth waiting if you can!
 
 ### Optional but recommended
 - **UPS Battery Backup** — ~$50-100 (protects against power outages)
