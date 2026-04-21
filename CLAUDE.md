@@ -147,7 +147,7 @@ All orders — CSPs, covered calls, stop loss sells — use the same escalation:
 ## Key Configuration (config.py)
 
 ```python
-IBKR_PORT           = 7497    # 7497 = paper, 7496 = live
+IBKR_PORT           = 4002    # IB Gateway: 4002 = paper, 4001 = live
 TOTAL_FUND_BUDGET   = 250_000
 TARGET_PER_POSITION = 50_000
 MAX_PER_POSITION    = 70_000
@@ -155,7 +155,7 @@ NUM_POSITIONS       = 5
 STOP_LOSS_PCT       = 0.10    # 10% below assignment strike
 ```
 
-**IBKR TWS or Gateway must be running** on `127.0.0.1:7497` (paper) or `:7496` (live).
+**IB Gateway must be running** on `127.0.0.1:4002` (paper) or `:4001` (live). These are IB Gateway ports — TWS uses different ports (7497/7496).
 
 ## Dependencies
 

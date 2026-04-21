@@ -19,8 +19,17 @@ Each week the system runs a two-stage cycle:
 ## Prerequisites
 
 - Python 3.13+
-- [IB Gateway](https://www.interactivebrokers.com/en/trading/ibgateway-stable.php) (recommended for Mac Mini) or TWS running locally
+- [IB Gateway](https://www.interactivebrokers.com/en/trading/ibgateway-stable.php) running locally (set up via `setup_ibc.sh`)
 - Access to the You Rock Club screener API (Render)
+
+### IB Gateway vs TWS port numbers
+
+| Application | Paper trading | Live trading |
+|---|---|---|
+| **IB Gateway** (this system) | **4002** | **4001** |
+| TWS | 7497 | 7496 |
+
+IB Gateway uses different ports than TWS. `IBKR_PORT=4002` is the correct default for paper trading via IB Gateway.
 
 ## Installation
 
@@ -46,7 +55,7 @@ Edit `.env`:
 
 ```env
 IBKR_HOST=127.0.0.1
-IBKR_PORT=7497          # 7497 = paper trading, 7496 = live trading
+IBKR_PORT=4002          # IB Gateway: 4002 = paper, 4001 = live
 IBKR_CLIENT_ID=1
 ACCOUNT=YOUR_IBKR_ACCOUNT_ID
 RENDER_URL=https://yourockclub-ledger-sync.onrender.com/api/targets/csp

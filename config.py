@@ -5,7 +5,7 @@ load_dotenv()
 
 # ── You Rock Volatility Income Fund ──────────────────────────
 IBKR_HOST      = os.environ["IBKR_HOST"]
-IBKR_PORT      = int(os.environ["IBKR_PORT"])   # 7497 = paper, 7496 = live
+IBKR_PORT      = int(os.environ["IBKR_PORT"])   # IB Gateway: 4002 = paper, 4001 = live
 IBKR_CLIENT_ID = int(os.environ["IBKR_CLIENT_ID"])
 ACCOUNT        = os.environ["ACCOUNT"]
 

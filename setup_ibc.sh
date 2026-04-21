@@ -72,9 +72,9 @@ if [ -z "$IBKR_USERNAME" ] || [ -z "$IBKR_PASSWORD" ]; then
     fail "Re-run setup_ibc.sh after updating .env"
 fi
 
-[ -z "$IBKR_PORT" ] && IBKR_PORT="7497"
+[ -z "$IBKR_PORT" ] && IBKR_PORT="4002"
 TRADING_MODE="paper"
-[ "$IBKR_PORT" = "7496" ] && TRADING_MODE="live"
+[ "$IBKR_PORT" = "4001" ] && TRADING_MODE="live"
 ok "Credentials loaded  (port=$IBKR_PORT  mode=$TRADING_MODE)"
 
 # ── Step 2: Verify IB Gateway installation ────────────────────

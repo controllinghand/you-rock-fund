@@ -43,7 +43,7 @@ section "1 / 4   IB Gateway  (via IBC launchd service)"
 # ═════════════════════════════════════════════════════════════
 
 ibkr_port_open() {
-    lsof -i :7497 > /dev/null 2>&1 || lsof -i :7496 > /dev/null 2>&1
+    lsof -i :4002 > /dev/null 2>&1 || lsof -i :4001 > /dev/null 2>&1
 }
 
 GW_PID=$(launchctl list "$GW_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
@@ -142,8 +142,15 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════
-section "3 / 4   IBKR Connection  (127.0.0.1:7497)"
+section "3 / 4   IBKR Connection  (127.0.0.1:\$IBKR_PORT)"
 # ═════════════════════════════════════════════════════════════
+
+# Read port from .env so this section stays in sync with config automatically
+IBKR_PORT_VAL=$("$PYTHON" -c "
+import os; from dotenv import load_dotenv; load_dotenv()
+print(os.environ.get('IBKR_PORT', '4002'))
+" 2>/dev/null)
+IBKR_PORT_VAL="${IBKR_PORT_VAL:-4002}"
 
 IBKR_OUT=$("$PYTHON" -c "
 import sys
@@ -151,7 +158,7 @@ sys.path.insert(0, '$PROJ')
 from ib_insync import IB
 ib = IB()
 try:
-    ib.connect('127.0.0.1', 7497, clientId=98, timeout=8)
+    ib.connect('127.0.0.1', $IBKR_PORT_VAL, clientId=98, timeout=8)
     accts = ib.managedAccounts()
     print('OK account=' + (accts[0] if accts else 'unknown'))
     ib.disconnect()
@@ -165,7 +172,7 @@ if echo "$IBKR_OUT" | grep -q "^OK"; then
 else
     ERR=$(echo "$IBKR_OUT" | sed 's/^FAIL //')
     fail "Connection failed: $ERR"
-    warn "Ensure TWS is fully loaded and API connections are enabled on port 7497"
+    warn "IB Gateway paper=4002 live=4001 | check IB Gateway is running and API is enabled"
 fi
 
 # ═════════════════════════════════════════════════════════════
