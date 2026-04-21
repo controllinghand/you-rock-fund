@@ -202,6 +202,36 @@ com.yourockfund.scheduler.plist    — launchd service definition (auto-start)
 
 The `com.yourockfund.scheduler.plist` must be present in both the project folder (for git) and `~/Library/LaunchAgents/` (for launchd). `startup.sh` keeps them in sync automatically.
 
+## 🔔 Optional: Discord Notifications
+
+YRVI can post trade results to a Discord channel automatically. This is entirely optional — if no webhook is configured, the system runs silently as normal.
+
+### What gets posted
+
+| Event | When | Content |
+|-------|------|---------|
+| Pre-execution preview | Monday 9:50AM | Sized positions with strikes, contracts, estimated premium |
+| Weekly results | Monday ~10:30AM | CSP/CC/stop-loss P&L, week yield %, YTD stats |
+| Assignment alert | Friday 4:15PM | Newly assigned stocks with stop-loss prices |
+
+Results are color-coded: 🟢 green (≥1% yield), 🟡 yellow (0.5–1%), 🔴 red (<0.5%).
+
+YTD stats track total premium collected, weeks traded, avg weekly yield, best/worst week, and progress toward the $100K annual target. Stored locally in `ytd_tracker.json`.
+
+### Setup
+
+1. In Discord, go to your channel → **Edit Channel → Integrations → Webhooks → New Webhook**
+2. Copy the webhook URL
+3. Add it to your `.env` file:
+   ```env
+   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
+   ```
+4. Restart the scheduler — Discord posts will begin automatically
+
+No code changes needed. If `DISCORD_WEBHOOK_URL` is absent or blank, all Discord calls are silently skipped.
+
+---
+
 ## 🛒 Hardware & Shopping List
 
 A dedicated Mac Mini is the recommended setup for set-and-forget automated trading.

@@ -8,3 +8,4 @@ scheduler_stderr.log
 trade_log.txt
 scheduler_log.txt
 state.json
+ytd_tracker.json

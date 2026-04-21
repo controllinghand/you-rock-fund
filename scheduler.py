@@ -66,9 +66,48 @@ def run_assignment_detection():
     log.info("=" * 65)
     try:
         from wheel_manager import detect_assignments
+        state_before  = _load_state()
+        known_tickers = {h["ticker"] for h in state_before.get("wheel_holdings", [])}
+
         detect_assignments()
+
+        from discord_poster import is_enabled, post_assignment_alert
+        if is_enabled():
+            state_after  = _load_state()
+            today        = now.date().isoformat()
+            new_ones     = [h for h in state_after.get("wheel_holdings", [])
+                            if h["ticker"] not in known_tickers
+                            and h.get("assignment_date") == today]
+            post_assignment_alert(new_ones)
     except Exception as e:
         log.error(f"❌ Assignment detection error: {e}", exc_info=True)
+    finally:
+        loop.close()
+
+
+# ── Monday 9:50AM — Discord pre-execution preview ─────────────
+
+def run_discord_preview():
+    from discord_poster import is_enabled, post_preview
+    if not is_enabled():
+        return
+    loop = _new_loop()
+    log.info("📋 Discord preview — sizing positions...")
+    try:
+        from screener import get_top_targets
+        from position_sizer import size_all
+        state        = _load_state()
+        context      = state.get("monday_context", {})
+        skip_tickers = set(context.get("skip_tickers", []))
+        freed        = context.get("freed_capital", 0.0)
+        targets      = get_top_targets(10)
+        filtered     = [t for t in targets if t["ticker"] not in skip_tickers]
+        budget       = TOTAL_FUND_BUDGET + freed
+        positions    = size_all(filtered, budget=budget)
+        post_preview(positions, budget)
+        log.info("✅ Discord preview posted")
+    except Exception as e:
+        log.error(f"❌ Discord preview error: {e}", exc_info=True)
     finally:
         loop.close()
 
@@ -151,6 +190,10 @@ def run_pipeline():
         with open(STATE_FILE, "w") as f:
             json.dump(state, f, indent=2)
 
+        from discord_poster import is_enabled, post_weekly_results
+        if is_enabled():
+            post_weekly_results(_load_state(), fund_budget=effective_budget)
+
         log.info(f"\n✅ Done — {len(filled)}/{NUM_POSITIONS} CSP fills  |  "
                  f"CSP ${csp_premium:,.0f}  CC ${cc_premium:,.0f}  "
                  f"Total realized ${total_realized:,.0f}")
@@ -194,6 +237,11 @@ def main():
         id="friday_assignment", name="Friday Assignment Detection"
     )
     scheduler.add_job(
+        run_discord_preview,
+        trigger="cron", day_of_week="mon", hour=9, minute=50,
+        id="monday_discord_preview", name="Monday Discord Preview"
+    )
+    scheduler.add_job(
         run_wheel_check_job,
         trigger="cron", day_of_week="mon", hour=9, minute=55,
         id="monday_wheel_check", name="Monday Wheel Check"
@@ -214,6 +262,7 @@ def main():
     log.info(f"   Current time : {datetime.now(PST).strftime('%A %Y-%m-%d %H:%M %Z')}")
     log.info("   • Friday     4:15 PM PST — assignment detection")
     log.info("   • Saturday   6:00 PM PST — screener preview")
+    log.info("   • Monday     9:50 AM PST — Discord preview (if webhook set)")
     log.info("   • Monday     9:55 AM PST — wheel check (stop loss + CCs)")
     log.info("   • Monday    10:00 AM PST — CSP execution")
     log.info("   • Tue–Thu    9:00 AM PST — daily risk monitor")
