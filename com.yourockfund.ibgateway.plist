@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>com.yourockfund.ibgateway</string>
+
+    <!-- Run the IBC StartGateway.sh wrapper which launches IB Gateway and auto-logs in -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/seanleegreer/IBC/StartGateway.sh</string>
+    </array>
+
+    <!-- Start on login and keep alive after crashes (not after clean exit) -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- 60-second back-off prevents credential-loop crashes from spamming -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/seanleegreer/IBC/Logs/ibgateway_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seanleegreer/IBC/Logs/ibgateway_stderr.log</string>
+
+    <!-- IB Gateway needs a full GUI session — not suitable for LoginWindow domain -->
+    <key>SessionCreate</key>
+    <true/>
+
+</dict>
+</plist>

@@ -8,8 +8,9 @@ PROJ="/Users/seanleegreer/you_rock_fund"
 PYTHON="$PROJ/venv/bin/python3"
 PLIST_SRC="$PROJ/com.yourockfund.scheduler.plist"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.scheduler.plist"
-TWS_APP="$HOME/Applications/Trader Workstation/Trader Workstation.app"
 LABEL="com.yourockfund.scheduler"
+GW_LABEL="com.yourockfund.ibgateway"
+IBC_LOG="$HOME/IBC/Logs/ibgateway_stderr.log"
 
 # ANSI colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -38,34 +39,52 @@ printf "${NC}"
 echo "  $(date '+%A %Y-%m-%d  %H:%M:%S %Z')"
 
 # ═════════════════════════════════════════════════════════════
-section "1 / 4   Interactive Brokers TWS"
+section "1 / 4   IB Gateway  (via IBC launchd service)"
 # ═════════════════════════════════════════════════════════════
 
-tws_running() {
-    pgrep -f tws > /dev/null 2>&1 || lsof -i :7497 > /dev/null 2>&1
+ibkr_port_open() {
+    lsof -i :7497 > /dev/null 2>&1 || lsof -i :7496 > /dev/null 2>&1
 }
 
-if tws_running; then
-    pass "TWS is already running"
-else
-    warn "TWS not detected — launching now..."
-    if [ -d "$TWS_APP" ]; then
-        open "$TWS_APP"
-        printf "      ⏳ Waiting 30 seconds for TWS to initialise"
-        for i in $(seq 1 30); do
-            sleep 1
-            printf "."
-        done
-        echo ""
-        if tws_running; then
-            pass "TWS launched successfully"
-        else
-            warn "TWS process not yet visible — may still be loading"
-        fi
+GW_PID=$(launchctl list "$GW_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+
+if [ -n "$GW_PID" ] && ibkr_port_open; then
+    pass "IB Gateway running  (PID $GW_PID, API port open)"
+
+elif [ -n "$GW_PID" ]; then
+    # Process alive but port not open yet — likely still loading
+    warn "IB Gateway running (PID $GW_PID) but API port not open yet — waiting..."
+    for i in $(seq 1 30); do sleep 1; ibkr_port_open && break; printf "."; done
+    echo ""
+    if ibkr_port_open; then
+        pass "IB Gateway API port now open"
     else
-        fail "TWS not found at: $TWS_APP"
-        warn "Update TWS_APP path in startup.sh if installed elsewhere"
+        warn "API port still closed — IB Gateway may be logging in (allow ~60 s)"
     fi
+
+elif launchctl list "$GW_LABEL" > /dev/null 2>&1; then
+    # Registered but not running — restart it
+    warn "IB Gateway service registered but not running — restarting..."
+    launchctl kickstart -k "gui/$(id -u)/$GW_LABEL" > /dev/null 2>&1 || true
+    printf "      ⏳ Waiting up to 45 seconds for IB Gateway to launch"
+    for i in $(seq 1 45); do
+        sleep 1; printf "."
+        GW_PID=$(launchctl list "$GW_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+        [ -n "$GW_PID" ] && ibkr_port_open && break
+    done
+    echo ""
+    GW_PID=$(launchctl list "$GW_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+    if [ -n "$GW_PID" ]; then
+        pass "IB Gateway restarted  (PID $GW_PID)"
+    else
+        fail "IB Gateway failed to restart"
+        [ -f "$IBC_LOG" ] && warn "Last log line: $(tail -1 "$IBC_LOG" 2>/dev/null)"
+        warn "Run:  tail -f $IBC_LOG"
+    fi
+
+else
+    fail "IBC launchd service not installed (com.yourockfund.ibgateway)"
+    warn "Run setup once:  bash $PROJ/setup_ibc.sh"
 fi
 
 # ═════════════════════════════════════════════════════════════

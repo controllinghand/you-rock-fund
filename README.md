@@ -19,7 +19,7 @@ Each week the system runs a two-stage cycle:
 ## Prerequisites
 
 - Python 3.13+
-- [Interactive Brokers TWS or IB Gateway](https://www.interactivebrokers.com/en/trading/tws.php) running locally
+- [IB Gateway](https://www.interactivebrokers.com/en/trading/ibgateway-stable.php) (recommended for Mac Mini) or TWS running locally
 - Access to the You Rock Club screener API (Render)
 
 ## Installation
@@ -55,9 +55,41 @@ RENDER_SECRET=YOUR_RENDER_SECRET_KEY
 
 Fund parameters (capital, position targets, schedule) are constants in `config.py`.
 
+## IB Gateway Auto-Login (Mac Mini)
+
+IB Gateway is managed by IBC and launchd — it starts automatically at login and re-authenticates without manual intervention.
+
+**One-time setup (run once per machine):**
+```bash
+# Add credentials to .env first:
+#   IBKR_USERNAME=your_login
+#   IBKR_PASSWORD=your_password
+
+bash ~/you_rock_fund/setup_ibc.sh
+```
+
+`setup_ibc.sh` downloads IBC, generates `~/IBC/config.ini` from your `.env`, and installs the `com.yourockfund.ibgateway` launchd service.
+
+> **Note:** IBKR's offline installer may include the version number in the install path,
+> e.g. `~/Applications/IB Gateway 10.37/IB Gateway 10.37.app`. `setup_ibc.sh`
+> handles both the fixed path and any versioned path automatically.
+
+**IB Gateway service management:**
+```bash
+# Status
+launchctl list com.yourockfund.ibgateway
+
+# Restart
+launchctl kickstart -k gui/$(id -u) com.yourockfund.ibgateway
+
+# Logs
+tail -f ~/IBC/Logs/ibgateway_stdout.log
+tail -f ~/IBC/Logs/ibgateway_stderr.log
+```
+
 ## Mac Startup (after any reboot)
 
-**Double-click `YRVI Startup` on the Desktop.** It opens Terminal, launches TWS if needed, ensures the scheduler is running, tests the IBKR connection, and prints a full GO/NO-GO table.
+**Double-click `YRVI Startup` on the Desktop.** It verifies IB Gateway is running, ensures the scheduler is alive, tests the IBKR API connection, and prints a full GO/NO-GO table.
 
 Or run from the terminal:
 ```bash
