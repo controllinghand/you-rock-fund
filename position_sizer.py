@@ -49,9 +49,10 @@ def size_position(target: dict, available_capital: float, is_last: bool = False)
         "buyzone":       target.get("buyzone_flag", False),
     }
 
-def size_all(targets: list) -> list:
+def size_all(targets: list, budget: float = None) -> list:
     sized            = []
-    remaining_budget = TOTAL_FUND_BUDGET
+    remaining_budget = budget if budget is not None else TOTAL_FUND_BUDGET
+    effective_budget = remaining_budget
     target_index     = 0
 
     while len(sized) < NUM_POSITIONS and target_index < len(targets):
@@ -66,7 +67,7 @@ def size_all(targets: list) -> list:
         target_index += 1
 
     print("\n💼 Position Sizing Summary")
-    print(f"   Fund Budget: ${TOTAL_FUND_BUDGET:,.0f}  |  Target: ${TARGET_PER_POSITION:,.0f}/pos  |  Max last pos: ${MAX_PER_POSITION:,.0f}")
+    print(f"   Fund Budget: ${effective_budget:,.0f}  |  Target: ${TARGET_PER_POSITION:,.0f}/pos  |  Max last pos: ${MAX_PER_POSITION:,.0f}")
     print("=" * 65)
 
     total_capital = 0
@@ -85,7 +86,7 @@ def size_all(targets: list) -> list:
         total_capital += p["capital_used"]
         total_premium += p["premium_total"]
 
-    leftover = TOTAL_FUND_BUDGET - total_capital
+    leftover = effective_budget - total_capital
     print("\n" + "=" * 65)
     print(f"  Positions Filled:       {len(sized)} / {NUM_POSITIONS}")
     print(f"  Total Capital Deployed: ${total_capital:,.0f}")

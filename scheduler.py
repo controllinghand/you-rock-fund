@@ -1,10 +1,11 @@
+import json
 import logging
 import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
-from config import NUM_POSITIONS
+from config import NUM_POSITIONS, TOTAL_FUND_BUDGET
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,49 +17,29 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-PST = ZoneInfo("America/Los_Angeles")
+PST       = ZoneInfo("America/Los_Angeles")
+STATE_FILE = "state.json"
 
 
-def run_pipeline():
-    """Monday 10AM PST — full execution"""
-    # ── Fix: create event loop for this thread ────────────────
+def _new_loop():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    return loop
 
-    now = datetime.now(PST)
-    log.info("\n" + "=" * 65)
-    log.info(f"⏰ MONDAY EXECUTION — {now.strftime('%A %Y-%m-%d %H:%M %Z')}")
-    log.info("=" * 65)
+
+def _load_state() -> dict:
     try:
-        from screener import get_top_targets
-        from position_sizer import size_all
-        from trader import execute_positions
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
 
-        all_targets = get_top_targets(10)
-        if not all_targets:
-            log.error("❌ No targets — aborting"); return
 
-        positions = size_all(all_targets)
-        if not positions:
-            log.error("❌ No positions sized — aborting"); return
-
-        results      = execute_positions(positions, extra_targets=all_targets)
-        filled = [r for r in results if r.get("status") in ("filled", "dry_run", "partial_fill")]
-        total  = sum(r.get("premium_collected", 0) for r in results)
-        log.info(f"\n✅ Done — {len(filled)}/{NUM_POSITIONS} positions  |  Premium: ${total:,.0f}")
-
-    except Exception as e:
-        log.error(f"❌ Pipeline error: {e}", exc_info=True)
-    finally:
-        loop.close()
-
+# ── Saturday 6PM — screener preview ───────────────────────────
 
 def run_screener_preview():
-    """Saturday 6PM PST — preview only, no trades"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    now = datetime.now(PST)
+    loop = _new_loop()
+    now  = datetime.now(PST)
     log.info("\n" + "=" * 65)
     log.info(f"📋 SATURDAY PREVIEW — {now.strftime('%A %Y-%m-%d %H:%M %Z')}")
     log.info("=" * 65)
@@ -69,41 +50,173 @@ def run_screener_preview():
         targets   = get_top_targets(10)
         positions = size_all(targets)
         log.info(f"\n📋 {len(positions)} positions queued for Monday 10AM")
-
     except Exception as e:
         log.error(f"❌ Preview error: {e}", exc_info=True)
     finally:
         loop.close()
 
 
+# ── Friday 4:15PM — assignment detection ──────────────────────
+
+def run_assignment_detection():
+    loop = _new_loop()
+    now  = datetime.now(PST)
+    log.info("\n" + "=" * 65)
+    log.info(f"🔍 FRIDAY ASSIGNMENT DETECTION — {now.strftime('%A %Y-%m-%d %H:%M %Z')}")
+    log.info("=" * 65)
+    try:
+        from wheel_manager import detect_assignments
+        detect_assignments()
+    except Exception as e:
+        log.error(f"❌ Assignment detection error: {e}", exc_info=True)
+    finally:
+        loop.close()
+
+
+# ── Monday 9:55AM — wheel check (runs before CSP pipeline) ────
+
+def run_wheel_check_job():
+    loop = _new_loop()
+    now  = datetime.now(PST)
+    log.info("\n" + "=" * 65)
+    log.info(f"🔄 MONDAY WHEEL CHECK — {now.strftime('%A %Y-%m-%d %H:%M %Z')}")
+    log.info("=" * 65)
+    try:
+        from wheel_manager import run_wheel_check
+        freed, skip = run_wheel_check()
+        log.info(f"✅ Wheel check done — freed ${freed:,.0f}  skip {skip or 'none'}")
+    except Exception as e:
+        log.error(f"❌ Wheel check error: {e}", exc_info=True)
+    finally:
+        loop.close()
+
+
+# ── Monday 10AM — CSP execution pipeline ──────────────────────
+
+def run_pipeline():
+    loop = _new_loop()
+    now  = datetime.now(PST)
+    log.info("\n" + "=" * 65)
+    log.info(f"⏰ MONDAY EXECUTION — {now.strftime('%A %Y-%m-%d %H:%M %Z')}")
+    log.info("=" * 65)
+    try:
+        from screener import get_top_targets
+        from position_sizer import size_all
+        from trader import execute_positions
+
+        # Read context left by wheel_check (9:55AM)
+        state         = _load_state()
+        context       = state.get("monday_context", {})
+        skip_tickers  = set(context.get("skip_tickers", []))
+        freed_capital = context.get("freed_capital", 0.0)
+
+        if skip_tickers:
+            log.info(f"  🚫 Skipping tickers (stop loss exits): {skip_tickers}")
+        if freed_capital > 0:
+            log.info(f"  💰 Freed capital added to pool: ${freed_capital:,.0f}")
+
+        all_targets = get_top_targets(10)
+        if not all_targets:
+            log.error("❌ No targets returned — aborting"); return
+
+        # Filter out stop-loss tickers so they don't re-enter as CSPs this week
+        filtered_targets = [t for t in all_targets if t["ticker"] not in skip_tickers]
+        if len(filtered_targets) < len(all_targets):
+            log.info(f"  Filtered {len(all_targets) - len(filtered_targets)} ticker(s) "
+                     f"from screener results")
+
+        effective_budget = TOTAL_FUND_BUDGET + freed_capital
+        positions = size_all(filtered_targets, budget=effective_budget)
+        if not positions:
+            log.error("❌ No positions sized — aborting"); return
+
+        results = execute_positions(positions, extra_targets=filtered_targets)
+
+        # ── Build weekly P&L ──────────────────────────────────
+        filled        = [r for r in results if r.get("status") in ("filled", "dry_run", "partial_fill")]
+        csp_premium   = sum(r.get("premium_collected", 0) for r in results)
+        cc_premium    = context.get("cc_premium", 0.0)
+        stop_loss_pnl = context.get("stop_loss_realized_pnl", 0.0)
+        total_realized = round(csp_premium + cc_premium + stop_loss_pnl, 2)
+
+        state = _load_state()   # reload — execute_positions may have written it
+        state["weekly_pnl"] = {
+            "week_start":             now.strftime("%Y-%m-%d"),
+            "csp_premium":            round(csp_premium, 2),
+            "cc_premium":             round(cc_premium, 2),
+            "stop_loss_realized_pnl": round(stop_loss_pnl, 2),
+            "total_realized":         total_realized,
+            "last_updated":           datetime.now().isoformat()
+        }
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+
+        log.info(f"\n✅ Done — {len(filled)}/{NUM_POSITIONS} CSP fills  |  "
+                 f"CSP ${csp_premium:,.0f}  CC ${cc_premium:,.0f}  "
+                 f"Total realized ${total_realized:,.0f}")
+
+    except Exception as e:
+        log.error(f"❌ Pipeline error: {e}", exc_info=True)
+    finally:
+        loop.close()
+
+
+# ── Tuesday–Thursday 9AM — daily risk monitor ─────────────────
+
+def run_risk_monitor():
+    loop = _new_loop()
+    now  = datetime.now(PST)
+    log.info("\n" + "=" * 65)
+    log.info(f"📊 DAILY RISK MONITOR — {now.strftime('%A %Y-%m-%d %H:%M %Z')}")
+    log.info("=" * 65)
+    try:
+        from risk_manager import run_daily_monitor
+        run_daily_monitor()
+    except Exception as e:
+        log.error(f"❌ Risk monitor error: {e}", exc_info=True)
+    finally:
+        loop.close()
+
+
+# ── Scheduler main ─────────────────────────────────────────────
+
 def main():
     scheduler = BlockingScheduler(timezone=PST)
 
     scheduler.add_job(
         run_screener_preview,
-        trigger="cron",
-        day_of_week="sat",
-        hour=18,
-        minute=0,
-        id="saturday_preview",
-        name="Saturday Screener Preview"
+        trigger="cron", day_of_week="sat", hour=18, minute=0,
+        id="saturday_preview", name="Saturday Screener Preview"
     )
-
+    scheduler.add_job(
+        run_assignment_detection,
+        trigger="cron", day_of_week="fri", hour=16, minute=15,
+        id="friday_assignment", name="Friday Assignment Detection"
+    )
+    scheduler.add_job(
+        run_wheel_check_job,
+        trigger="cron", day_of_week="mon", hour=9, minute=55,
+        id="monday_wheel_check", name="Monday Wheel Check"
+    )
     scheduler.add_job(
         run_pipeline,
-        trigger="cron",
-        day_of_week="mon",
-        hour=10,
-        minute=0,
-        id="monday_execution",
-        name="Monday Trade Execution"
+        trigger="cron", day_of_week="mon", hour=10, minute=0,
+        id="monday_execution", name="Monday CSP Execution"
+    )
+    scheduler.add_job(
+        run_risk_monitor,
+        trigger="cron", day_of_week="tue,wed,thu", hour=9, minute=0,
+        id="daily_risk_monitor", name="Daily Risk Monitor"
     )
 
     log.info("\n" + "=" * 65)
     log.info("🗓️  YOU ROCK FUND SCHEDULER — Running")
     log.info(f"   Current time : {datetime.now(PST).strftime('%A %Y-%m-%d %H:%M %Z')}")
-    log.info("   • Saturday  6:00 PM PST — screener preview")
-    log.info("   • Monday   10:00 AM PST — execute trades")
+    log.info("   • Friday     4:15 PM PST — assignment detection")
+    log.info("   • Saturday   6:00 PM PST — screener preview")
+    log.info("   • Monday     9:55 AM PST — wheel check (stop loss + CCs)")
+    log.info("   • Monday    10:00 AM PST — CSP execution")
+    log.info("   • Tue–Thu    9:00 AM PST — daily risk monitor")
     log.info("   Press Ctrl+C to stop")
     log.info("=" * 65 + "\n")
 

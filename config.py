@@ -16,6 +16,10 @@ MAX_PER_POSITION    = 70_000     # never exceed this per position
 NUM_POSITIONS       = 5          # top N targets
 WEEKLY_INCOME_GOAL  = 0.01       # 1% per week
 
+# IBKR client IDs — each module gets its own to allow concurrent connections
+IBKR_CLIENT_ID_WHEEL = 2        # wheel_manager.py
+IBKR_CLIENT_ID_RISK  = 3        # risk_manager.py
+
 # Risk management
 STOP_LOSS_PCT    = 0.10          # sell stock if 10% below assignment strike
 
