@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>com.yourockfund.scheduler</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/seanleegreer/you_rock_fund/venv/bin/python3</string>
+        <string>/Users/seanleegreer/you_rock_fund/scheduler.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/seanleegreer/you_rock_fund</string>
+
+    <!-- Logs — excluded from git via .gitignore -->
+    <key>StandardOutPath</key>
+    <string>/Users/seanleegreer/you_rock_fund/scheduler_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seanleegreer/you_rock_fund/scheduler_stderr.log</string>
+
+    <!-- Auto-start at login and restart after any crash -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Prevent restart storm: wait 10s between restarts (launchd default) -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/seanleegreer</string>
+        <key>PATH</key>
+        <string>/Users/seanleegreer/you_rock_fund/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Flush Python output immediately so logs are written in real time -->
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+</dict>
+</plist>

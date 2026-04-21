@@ -55,22 +55,46 @@ RENDER_SECRET=YOUR_RENDER_SECRET_KEY
 
 Fund parameters (capital, position targets, schedule) are constants in `config.py`.
 
-## Running
+## Mac Startup (after any reboot)
 
-**Start the scheduler** (runs indefinitely — Saturday preview + Monday execution):
+**Double-click `YRVI Startup` on the Desktop.** It opens Terminal, launches TWS if needed, ensures the scheduler is running, tests the IBKR connection, and prints a full GO/NO-GO table.
+
+Or run from the terminal:
 ```bash
-source venv/bin/activate
-python scheduler.py
+bash ~/you_rock_fund/startup.sh
 ```
 
-**Run once immediately** (screener → size → execute):
+The scheduler is managed by macOS **launchd** — it starts automatically at login and restarts itself if it ever crashes. No manual `nohup` needed.
+
+**Scheduler management:**
 ```bash
+# Status
+launchctl list com.yourockfund.scheduler
+
+# Stop
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.yourockfund.scheduler.plist
+
+# Start / reload after plist changes
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.yourockfund.scheduler.plist
+
+# Logs
+tail -f ~/you_rock_fund/scheduler_stdout.log
+tail -f ~/you_rock_fund/scheduler_stderr.log
+```
+
+## Running Manually
+
+**Run full pipeline once immediately** (screener → size → execute):
+```bash
+source venv/bin/activate
 python trader.py
 ```
 
-**Background daemon:**
+**Manual wheel operations:**
 ```bash
-nohup python scheduler.py > nohup.out 2>&1 &
+python wheel_manager.py detect   # run assignment detection now
+python wheel_manager.py check    # run wheel check (stop loss + CCs) now
+python risk_manager.py           # run daily risk monitor now
 ```
 
 **Dry run** — set `DRY_RUN = True` in `trader.py` to simulate without placing orders.
@@ -78,9 +102,12 @@ nohup python scheduler.py > nohup.out 2>&1 &
 ## Monitoring
 
 ```bash
-tail -f trade_log.txt       # Per-trade execution details and order fills
-tail -f scheduler_log.txt   # Scheduler heartbeat and pipeline logs
-cat state.json              # Last run: positions sized, fills, premiums collected
+tail -f trade_log.txt           # CSP execution details and order fills
+tail -f wheel_log.txt           # Wheel check: stop loss exits, covered calls
+tail -f risk_log.txt            # Daily risk monitor and P&L snapshots
+tail -f scheduler_stdout.log    # Scheduler stdout (launchd-managed)
+tail -f scheduler_stderr.log    # Scheduler errors (launchd-managed)
+cat state.json                  # Full system state: positions, wheel holdings, P&L
 ```
 
 ## Screener Scoring
@@ -95,7 +122,7 @@ Hard filters applied before scoring:
 - `wheel_fit == "Wheel-ready"`
 - Delta ≤ 0.21
 - Buffer ≥ 5%
-- Days to expiry ≥ 4
+- Days to expiry ≥ 3 (Mon→Fri = 3 UTC calendar days)
 
 ## Capital Allocation
 
@@ -120,10 +147,16 @@ Liquidity checks: spread ≤ 20%, open interest ≥ 100.
 ## File Structure
 
 ```
-config.py          — Fund parameters and env var loading
-screener.py        — Render API fetch, filters, scoring
-position_sizer.py  — Capital allocation logic
-trader.py          — IBKR execution engine
-scheduler.py       — APScheduler orchestration
-.env.template      — Environment variable template
+config.py                          — Fund parameters and env var loading
+screener.py                        — Render API fetch, filters, scoring
+position_sizer.py                  — Capital allocation logic
+trader.py                          — IBKR CSP execution engine
+wheel_manager.py                   — Assignment detection, stop loss, covered calls
+risk_manager.py                    — Daily price monitoring and P&L tracking
+scheduler.py                       — APScheduler orchestration (5 jobs)
+startup.sh                         — Startup & pre-flight check script
+com.yourockfund.scheduler.plist    — launchd service definition (auto-start)
+.env.template                      — Environment variable template
 ```
+
+The `com.yourockfund.scheduler.plist` must be present in both the project folder (for git) and `~/Library/LaunchAgents/` (for launchd). `startup.sh` keeps them in sync automatically.
