@@ -41,7 +41,11 @@ echo "  $(date '+%A %Y-%m-%d  %H:%M:%S %Z')"
 section "1 / 4   Interactive Brokers TWS"
 # ═════════════════════════════════════════════════════════════
 
-if pgrep -f "Trader Workstation\|tws\b" > /dev/null 2>&1; then
+tws_running() {
+    pgrep -f tws > /dev/null 2>&1 || lsof -i :7497 > /dev/null 2>&1
+}
+
+if tws_running; then
     pass "TWS is already running"
 else
     warn "TWS not detected — launching now..."
@@ -53,7 +57,7 @@ else
             printf "."
         done
         echo ""
-        if pgrep -f "Trader Workstation\|tws\b" > /dev/null 2>&1; then
+        if tws_running; then
             pass "TWS launched successfully"
         else
             warn "TWS process not yet visible — may still be loading"
@@ -204,7 +208,7 @@ except Exception as e:
 
 if echo "$SCREEN_OUT" | grep -q "^OK"; then
     T=$(echo    "$SCREEN_OUT" | grep -o 't=[0-9]*'    | cut -d= -f2)
-    P=$(echo    "$SCREEN_OUT" | grep -o 'p=[0-9]*'    | cut -d= -f2)
+    P=$(echo    "$SCREEN_OUT" | grep -o ' p=[0-9]*'   | tr -d ' ' | cut -d= -f2)
     CAP=$(echo  "$SCREEN_OUT" | grep -o 'cap=[0-9]*'  | cut -d= -f2)
     PREM=$(echo "$SCREEN_OUT" | grep -o 'prem=[0-9]*' | cut -d= -f2)
     YLD=$(echo  "$SCREEN_OUT" | grep -o 'yld=[0-9.]*' | cut -d= -f2)
