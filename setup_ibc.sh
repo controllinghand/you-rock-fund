@@ -20,8 +20,9 @@ set -euo pipefail
 PROJ="/Users/seanleegreer/you_rock_fund"
 IBC_DIR="$HOME/IBC"
 IBC_LOG_DIR="$IBC_DIR/Logs"
-IBC_VERSION="3.18.0"
+IBC_VERSION="3.23.0"
 IBC_ZIP_URL="https://github.com/IbcAlpha/IBC/releases/download/${IBC_VERSION}/IBCMacos-${IBC_VERSION}.zip"
+IBC_ZIP_URL_FALLBACK="https://github.com/IbcAlpha/IBC/releases/latest/download/IBCMacos.zip"
 IBC_ZIP="/tmp/IBCMacos-${IBC_VERSION}.zip"
 
 PLIST_SRC="$PROJ/com.yourockfund.ibgateway.plist"
@@ -168,8 +169,11 @@ if [ -f "$IBC_DIR/IBCMacos.sh" ] || [ -f "$IBC_DIR/StartGateway.sh" ]; then
     ok "IBC already installed at $IBC_DIR"
 else
     info "Downloading IBC $IBC_VERSION..."
-    curl -fsSL "$IBC_ZIP_URL" -o "$IBC_ZIP" || \
-        fail "Download failed — check internet connection and IBC_ZIP_URL in setup_ibc.sh"
+    if ! curl -fsSL "$IBC_ZIP_URL" -o "$IBC_ZIP" 2>/dev/null; then
+        warn "Version-specific URL failed — trying /latest redirect..."
+        curl -fsSL "$IBC_ZIP_URL_FALLBACK" -o "$IBC_ZIP" || \
+            fail "Both download URLs failed. Check https://github.com/IbcAlpha/IBC/releases and update IBC_VERSION in setup_ibc.sh"
+    fi
     mkdir -p "$IBC_DIR"
     unzip -q "$IBC_ZIP" -d "$IBC_DIR"
     rm -f "$IBC_ZIP"
