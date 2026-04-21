@@ -35,9 +35,13 @@
     <key>StandardErrorPath</key>
     <string>/Users/seanleegreer/IBC/Logs/ibgateway_stderr.log</string>
 
-    <!-- IB Gateway needs a full GUI session — not suitable for LoginWindow domain -->
-    <key>SessionCreate</key>
-    <true/>
+    <!-- Restrict to the user's Aqua (GUI login) session so the job inherits
+         window server access. IB Gateway is a Java/Swing app that must display
+         a login dialog — it cannot run in a headless background session.
+         SessionCreate is intentionally absent: it would create an isolated
+         security session without window server access, defeating this key. -->
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
 
 </dict>
 </plist>
