@@ -201,3 +201,43 @@ com.yourockfund.scheduler.plist    — launchd service definition (auto-start)
 ```
 
 The `com.yourockfund.scheduler.plist` must be present in both the project folder (for git) and `~/Library/LaunchAgents/` (for launchd). `startup.sh` keeps them in sync automatically.
+
+## 🛒 Hardware & Shopping List
+
+A dedicated Mac Mini is the recommended setup for set-and-forget automated trading.
+
+### Minimum Requirements
+| Component | Spec | Notes |
+|-----------|------|-------|
+| Computer | Mac Mini M4 | M5 coming ~mid 2026 |
+| RAM | 16GB | Base config is fine |
+| Storage | 256GB SSD | Base config is fine |
+| OS | macOS Sequoia | Required for launchd |
+| Network | Ethernet (recommended) | More reliable than WiFi |
+
+### Shopping List
+- **Mac Mini M4 (16GB/256GB)** — ~$469-599
+  https://www.amazon.com/dp/B0DLKT2MQ4
+- **Ethernet cable** — ~$10 (if needed)
+- **IBKR Account** — Free (paper trading available)
+  https://www.interactivebrokers.com
+
+### Optional but recommended
+- **UPS Battery Backup** — ~$50-100 (protects against power outages)
+- **Monitor** (only needed for initial setup, can SSH after)
+
+### Why Mac Mini?
+- Runs 24/7 silently (~6W power draw)
+- Auto-restarts after power outage
+- IB Gateway + YRVI use <1GB RAM total
+- Pays for itself in first week of trading ($3,500+ weekly target)
+
+### Total Setup Cost
+| Item | Cost |
+|------|------|
+| Mac Mini M4 | ~$499 |
+| UPS backup | ~$75 |
+| Ethernet cable | ~$10 |
+| **Total** | **~$584 one time** |
+
+vs $3,500+/week potential income = ROI in first week! 💰
