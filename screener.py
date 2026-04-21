@@ -18,7 +18,7 @@ PARAMS = {
 MAX_DELTA           = 0.21
 MIN_BUFFER_PCT      = 0.05
 MIN_BUFFER_PRIORITY = 0.10
-MIN_DAYS_TO_EXPIRY  = 4 
+MIN_DAYS_TO_EXPIRY  = 3   # Mon→Fri = 3 UTC calendar days; 4 fails Monday execution
 
 def score_target(row: dict) -> float:
     premium_pct  = row.get("put_20d_premium_pct", 0)
