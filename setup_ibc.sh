@@ -86,31 +86,32 @@ GATEWAY_APP=""
 GATEWAY_VERSION=""
 
 find_gateway() {
-    # Fixed paths (no version suffix)
-    local candidates=(
-        "$HOME/Applications/IB Gateway/IB Gateway.app"
-        "/Applications/IB Gateway.app"
-        "$HOME/Applications/IBKR Desktop/IBKR Desktop.app"
-        "/Applications/IBKR Desktop.app"
-    )
-    for c in "${candidates[@]}"; do
-        [ -d "$c" ] && echo "$c" && return 0
-    done
+    local hit
 
-    # Versioned install dirs: "IB Gateway 10.37/IB Gateway 10.37.app" etc.
-    local versioned
-    versioned=$(find "$HOME/Applications" -maxdepth 2 -name "*.app" -path "*Gateway*" 2>/dev/null \
-                | sort -V | tail -1)
-    [ -n "$versioned" ] && echo "$versioned" && return 0
+    # Helper: filter out hidden-dir paths (/.something) and uninstaller apps.
+    # IBKR installs auxiliary .apps in .install4j/ and an "Uninstaller.app"
+    # alongside the real "IB Gateway 10.37.app" — we want only the latter.
+    gw_filter() {
+        grep -i "gateway" | grep -v "/\." | grep -iv "uninstall" | sort -V | tail -1
+    }
 
-    versioned=$(find "/Applications" -maxdepth 2 -name "*.app" -path "*Gateway*" 2>/dev/null \
-                | sort -V | tail -1)
-    [ -n "$versioned" ] && echo "$versioned" && return 0
+    # ~/Applications — handles versioned dirs like "IB Gateway 10.37/"
+    hit=$(find "$HOME/Applications" -maxdepth 3 -name "*.app" 2>/dev/null | gw_filter)
+    [ -n "$hit" ] && echo "$hit" && return 0
 
-    # Offline installer layout: ~/Jts/ibgateway/<version>/*.app
-    local jts_gw
-    jts_gw=$(find "$HOME/Jts/ibgateway" -maxdepth 2 -name "*.app" 2>/dev/null | head -1)
-    [ -n "$jts_gw" ] && echo "$jts_gw" && return 0
+    # /Applications — system-wide install
+    hit=$(find "/Applications" -maxdepth 3 -name "*.app" 2>/dev/null | gw_filter)
+    [ -n "$hit" ] && echo "$hit" && return 0
+
+    # IBKR-branded installs that don't include the word "gateway" in the app name
+    hit=$(find "$HOME/Applications" -maxdepth 3 -name "*.app" 2>/dev/null \
+          | grep -i "ibkr" | grep -v "/\." | grep -iv "uninstall" | sort -V | tail -1)
+    [ -n "$hit" ] && echo "$hit" && return 0
+
+    # Offline installer layout: ~/Jts/ibgateway/<version>/
+    hit=$(find "$HOME/Jts/ibgateway" -maxdepth 3 -name "*.app" 2>/dev/null \
+          | grep -v "/\." | sort -V | tail -1)
+    [ -n "$hit" ] && echo "$hit" && return 0
 
     return 1
 }
@@ -123,22 +124,40 @@ if [ -z "$GATEWAY_APP" ]; then
     echo ""
     echo "  1. Go to:  https://www.interactivebrokers.com/en/trading/ibgateway-stable.php"
     echo "  2. Download the macOS offline installer"
-    echo "  3. Run the installer — default path: ~/Applications/IB Gateway/"
+    echo "  3. Run the installer — IBKR may include the version in the path,"
+    echo "     e.g.  ~/Applications/IB Gateway 10.37/IB Gateway 10.37.app"
     echo "  4. Re-run this script"
     echo ""
     fail "IB Gateway not installed"
 fi
-ok "IB Gateway: $GATEWAY_APP"
 
-# Detect version number from the install directory
+info "  Found: $GATEWAY_APP"   # debug — confirms which path was matched
+ok "IB Gateway: $(basename "$GATEWAY_APP")"
+
+# Extract version from the parent directory name.
+# Handles:
+#   "IB Gateway 10.37"  → dot=10.37  num=1037
+#   "IB Gateway"        → fallback   num=1028
+#   "1028"              → Jts layout, convert 1028 → 10.28
 GATEWAY_DIR=$(dirname "$GATEWAY_APP")
-GATEWAY_VERSION=$(ls "$GATEWAY_DIR" 2>/dev/null | grep -E '^[0-9]+$' | sort -n | tail -1 || true)
-[ -z "$GATEWAY_VERSION" ] && GATEWAY_VERSION=$(ls "$HOME/Jts/ibgateway" 2>/dev/null | grep -E '^[0-9]+$' | sort -n | tail -1 || true)
-[ -z "$GATEWAY_VERSION" ] && GATEWAY_VERSION="1028"   # sensible default
-ok "Version dir: $GATEWAY_VERSION"
+GATEWAY_PARENT=$(basename "$GATEWAY_DIR")
 
-# Config path where IB Gateway writes its settings
-GATEWAY_CONF="$HOME/Jts/ibgateway/$GATEWAY_VERSION"
+if echo "$GATEWAY_PARENT" | grep -qE '[0-9]+\.[0-9]+'; then
+    GATEWAY_VERSION_DOT=$(echo "$GATEWAY_PARENT" | grep -oE '[0-9]+\.[0-9]+' | tail -1)
+elif echo "$GATEWAY_PARENT" | grep -qE '^[0-9]{4}$'; then
+    # Pure 4-digit from Jts dir (e.g. "1037") → "10.37"
+    GATEWAY_VERSION_DOT=$(echo "$GATEWAY_PARENT" | sed 's/\([0-9][0-9]\)\([0-9][0-9]\)/\1.\2/')
+else
+    GATEWAY_VERSION_DOT="10.28"   # safe fallback
+fi
+
+# Numeric form without dot — used as the Jts config path (e.g. 1037)
+GATEWAY_VERSION_NUM=$(echo "$GATEWAY_VERSION_DOT" | tr -d '.')
+
+ok "Version: $GATEWAY_VERSION_DOT  (IBC TWS_MAJOR_VRSN=$GATEWAY_VERSION_DOT  Jts dir=$GATEWAY_VERSION_NUM)"
+
+# Config path where IB Gateway writes its per-user settings
+GATEWAY_CONF="$HOME/Jts/ibgateway/$GATEWAY_VERSION_NUM"
 
 # ── Step 3: Install IBC ───────────────────────────────────────
 echo ""
@@ -198,10 +217,10 @@ patch_var() {
     fi
 }
 
-patch_var "TWS_MAJOR_VRSN" "$GATEWAY_VERSION" "$STARTGW"
-patch_var "IBC_PATH"        "$IBC_DIR"          "$STARTGW"
-patch_var "GATEWAY_PATH"    "$(dirname "$GATEWAY_APP")" "$STARTGW"
-patch_var "TWS_CONFIG_PATH" "$GATEWAY_CONF"     "$STARTGW"
+patch_var "TWS_MAJOR_VRSN" "$GATEWAY_VERSION_DOT" "$STARTGW"
+patch_var "IBC_PATH"        "$IBC_DIR"           "$STARTGW"
+patch_var "GATEWAY_PATH"    "$GATEWAY_DIR"       "$STARTGW"
+patch_var "TWS_CONFIG_PATH" "$GATEWAY_CONF"      "$STARTGW"
 patch_var "LOG_PATH"        "$IBC_LOG_DIR"      "$STARTGW"
 patch_var "TRADING_MODE"    "$TRADING_MODE"     "$STARTGW"
 patch_var "JAVA_PATH"       ""                  "$STARTGW"
