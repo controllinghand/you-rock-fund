@@ -1,20 +1,63 @@
 # You Rock Volatility Income Fund (YRVI)
 
-An automated Python algorithmic options trading system that generates weekly income by selling cash-secured puts (CSPs) on high-volatility, high-quality stocks through Interactive Brokers.
+An automated Python algorithmic options trading system that generates weekly income through the complete wheel strategy — selling cash-secured puts (CSPs), managing assignments with covered calls (CCs), and enforcing automatic stop losses — all running 24/7 on a Mac Mini with zero manual intervention.
 
 ## How It Works
 
-Each week the system runs a two-stage cycle:
+**Full weekly schedule:**
 
 | Day | Time (PST) | Action |
 |-----|-----------|--------|
 | Saturday | 6:00 PM | Screener preview — logs top 5 targets, no trades |
-| Monday | 10:00 AM | Full pipeline — screen → size → execute |
+| Monday | 9:50 AM | Discord preview — posts this week's sized positions |
+| Monday | 9:55 AM | Wheel check — stop losses + sell covered calls on assigned stocks |
+| Monday | 10:00 AM | CSP execution — screen → size → execute 5 positions |
+| Tuesday–Thursday | 9:00 AM | Daily risk monitor — checks stop loss thresholds, logs P&L |
+| Friday | 4:15 PM | Assignment detection — checks for newly assigned positions |
 
 **Pipeline:**
-1. **Screener** — fetches CSP candidates from the Render API, applies hard filters (delta ≤ 0.21, buffer ≥ 5%, DTE ≥ 4), and scores survivors by buffer + premium + IV
-2. **Position Sizer** — allocates $250K across up to 5 positions at ~$50K each
-3. **Trader** — connects to IBKR, qualifies each contract, checks liquidity, and executes with limit-mid → limit-bid → market escalation
+
+1. **Screener** — fetches candidates from the Render API, applies hard filters (delta ≤ 0.21, buffer ≥ 5%, DTE ≥ 3), and scores survivors by buffer + premium + IV
+
+2. **Position Sizer** — allocates $250K across up to 5 positions (~$50K each, last position gets remainder up to $70K max)
+
+3. **Wheel Manager** — Monday 9:55 AM:
+   - Detects stocks assigned from Friday's expiry
+   - Stock above 90% of assignment strike → sell covered call at strike, nearest Friday
+   - Stock below 90% of assignment strike → sell shares at market (stop loss)
+   - Freed capital flows back into that week's CSP pool
+
+4. **Trader** — connects to IBKR, qualifies contracts, checks liquidity (spread ≤ 20%, OI ≥ 100), executes with limit-mid → limit-bid → market escalation; automatically replaces failed positions with the next ranked ticker
+
+5. **Risk Manager** — daily Tue–Thu monitor checks all wheel holdings against the 10% stop loss threshold, logs unrealized P&L, and sends alerts
+
+6. **Discord Poster** — (optional) posts weekly results, YTD stats, Monday previews, and Friday assignment alerts to a Discord channel automatically
+
+## Strategy Overview
+
+### The Wheel Strategy
+
+```
+Week 1:  Sell CSP on TICKER at $50 strike → collect $500 premium
+           ↓ expires worthless → keep $500, repeat
+           ↓ or assigned 100 shares at $50
+Week 2:  Sell CC on 100 shares at $50 strike → collect $300 premium
+           ↓ expires worthless → keep $300, repeat
+           ↓ or shares called away at $50 → back to selling CSPs
+```
+
+Each cycle generates income whether the option expires or gets exercised.
+
+### Risk Management
+
+| Control | Rule |
+|---------|------|
+| Delta filter | Only sell puts with delta ≤ 0.21 (~20Δ) |
+| Buffer requirement | Strike must be ≥ 5% below current price |
+| Liquidity check | Spread ≤ 20%, Open Interest ≥ 100 |
+| Stop loss | Sell shares if price drops 10% below assignment strike |
+| Earnings protection | Skip tickers with earnings within 7 days |
+| Auto-replacement | Failed position → automatically try next ranked ticker |
 
 ## Getting Started
 
