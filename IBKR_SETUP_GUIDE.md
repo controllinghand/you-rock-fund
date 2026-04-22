@@ -31,6 +31,36 @@ A complete walkthrough for setting up your Interactive Brokers account to run th
 
 ---
 
+## ⚠️ CRITICAL: Choose IBKR Pro (NOT Lite)
+
+During signup IBKR will ask you to choose between two account tiers. **This is the most important choice in the entire setup.**
+
+| | IBKR Lite | IBKR Pro |
+|---|-----------|----------|
+| Commissions | $0 (free trades) | ~$0.65/contract |
+| API access | ❌ **None** | ✅ **Full access** |
+| YRVI compatible | ❌ **Will not work** | ✅ **Required** |
+
+### **You MUST select IBKR Pro.**
+
+YRVI is fully automated — it connects to IBKR via API to place every order. IBKR Lite has no API access, which means **the automation cannot place any trades.**
+
+**The commission cost is negligible:**
+
+| | Amount |
+|---|--------|
+| Options commission | ~$0.65 per contract |
+| Typical week (50 contracts sold) | ~$32 in commissions |
+| Typical weekly premium collected | $3,500+ |
+| Commission as % of income | **< 1%** ✅ |
+
+**If you accidentally selected IBKR Lite:**
+1. Log into the IBKR portal → **Account → Account Type**
+2. Request an upgrade to **IBKR Pro**
+3. Upgrade takes 1–2 business days to process
+
+---
+
 ## Step 2 — Personal Information
 
 Fill in your details as prompted. Here's what to expect:
@@ -83,6 +113,8 @@ Recommended answers for the YRVI strategy:
 ---
 
 ## Step 4 — Account Configuration ⭐ CRITICAL
+
+> **Reminder:** Make sure you selected **IBKR Pro** during signup. IBKR Lite has no API access and YRVI will not work with it. See the [IBKR Pro warning above](#️-critical-choose-ibkr-pro-not-lite) if you're unsure.
 
 **Account type: CASH**
 
