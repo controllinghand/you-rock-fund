@@ -362,11 +362,10 @@ rm -rf "$DESKTOP_APP"
 mkdir -p "$DESKTOP_APP/Contents/MacOS"
 mkdir -p "$DESKTOP_APP/Contents/Resources"
 
-# Copy Info.plist and launcher script from repo template
-cp "$PROJ/assets/app_template/Contents/Info.plist" \
-   "$DESKTOP_APP/Contents/Info.plist"
-cp "$PROJ/assets/app_template/Contents/MacOS/yrvi_startup" \
-   "$DESKTOP_APP/Contents/MacOS/yrvi_startup"
+# Copy bundle files from repo template
+cp "$PROJ/assets/app_template/Contents/Info.plist"        "$DESKTOP_APP/Contents/Info.plist"
+cp "$PROJ/assets/app_template/Contents/PkgInfo"           "$DESKTOP_APP/Contents/PkgInfo"
+cp "$PROJ/assets/app_template/Contents/MacOS/yrvi_startup" "$DESKTOP_APP/Contents/MacOS/yrvi_startup"
 chmod +x "$DESKTOP_APP/Contents/MacOS/yrvi_startup"
 
 # Generate .icns from logo source (regenerate if logo is newer than cached icns)
@@ -395,6 +394,16 @@ fi
 
 # Clear quarantine so macOS doesn't block an unsigned local app
 xattr -dr com.apple.quarantine "$DESKTOP_APP" 2>/dev/null || true
+
+# Flush Dock icon cache so the logo appears immediately (not a generic app icon)
+sudo find /private/var/folders -name "com.apple.dock.iconcache" \
+    -exec rm -f {} \; 2>/dev/null || true
+sudo find /private/var/folders -name "fsCachedData" \
+    -exec rm -rf {} \; 2>/dev/null || true
+killall Dock 2>/dev/null || true
+sleep 1
+osascript -e "tell application \"Finder\" to update item \
+    (POSIX file \"$DESKTOP_APP\" as alias)" 2>/dev/null || true
 
 ok "YRVI Startup.app created on Desktop — double-click to run pre-flight check"
 
