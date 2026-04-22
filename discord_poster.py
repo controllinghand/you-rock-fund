@@ -69,6 +69,102 @@ def _update_ytd(week_start: str, total_realized: float, fund_budget: float) -> d
     return ytd
 
 
+def _fmt_strike(v: float) -> str:
+    """$41 for whole numbers, $22.50 for decimals."""
+    return f"${v:.0f}" if v == int(v) else f"${v:.2f}"
+
+
+def _build_trades_section(state: dict) -> tuple[str, str]:
+    """
+    Returns (trades_text, slippage_line) built from state executions + positions.
+    Joins on ticker to get strike/screener_premium/buffer from sized positions.
+    """
+    executions = state.get("executions", [])
+    if not executions:
+        return "", ""
+
+    pos_by_ticker = {p["ticker"]: p for p in state.get("positions", [])}
+
+    EMOJI = {
+        "filled":             "✅",
+        "dry_run":            "✅",
+        "partial_fill":       "✅",
+        "failed":             "❌",
+        "failed_qualify":     "❌",
+        "failed_market_data": "❌",
+        "skipped_liquidity":  "⚠️",
+        "unfilled":           "❌",
+    }
+    SKIP_LABEL = {
+        "failed":             "failed — order unfilled",
+        "failed_qualify":     "skipped — could not qualify contract",
+        "failed_market_data": "skipped — no market data",
+        "skipped_liquidity":  "skipped — spread too wide",
+        "unfilled":           "unfilled",
+    }
+
+    lines          = []
+    slip_deltas    = []   # fill_price - screener_premium, per share
+
+    for ex in executions:
+        ticker     = ex.get("ticker", "?")
+        status     = ex.get("status", "unknown")
+        emoji      = EMOJI.get(status, "❓")
+        pos        = pos_by_ticker.get(ticker)
+        fill_price = ex.get("fill_price")
+        contracts  = ex.get("contracts", 0)
+        prem_coll  = ex.get("premium_collected", 0)
+        order_type = ex.get("order_type") or ""
+
+        strike      = pos["strike"]     if pos else None
+        screener_px = pos["premium"]    if pos else None   # per share
+        buffer_pct  = pos["buffer_pct"] if pos else None
+
+        if status in ("filled", "dry_run", "partial_fill") and fill_price is not None:
+            strike_str   = f"{_fmt_strike(strike)} strike" if strike else "? strike"
+            fill_str     = f"filled @ ${fill_price:.2f}"
+            screener_str = f"(screener ${screener_px:.2f})" if screener_px is not None else ""
+            otype_str    = f" via {order_type}" if order_type and order_type != "limit_mid" else ""
+            prem_str     = f"${prem_coll:,.0f}"
+            buf_str      = f"{buffer_pct:.1f}% buffer" if buffer_pct is not None else ""
+
+            parts = [
+                f"{emoji} **{ticker}**",
+                f"{strike_str}",
+                f"{contracts} contracts",
+                f"{fill_str} {screener_str}{otype_str}".strip(),
+                prem_str,
+            ]
+            if buf_str:
+                parts.append(buf_str)
+            lines.append("  |  ".join(parts))
+
+            if screener_px is not None:
+                slip_deltas.append(fill_price - screener_px)
+
+        else:
+            label      = SKIP_LABEL.get(status, status)
+            strike_str = f"{_fmt_strike(strike)} strike  |  " if strike is not None else ""
+            lines.append(f"{emoji} **{ticker}**  |  {strike_str}{label}")
+
+    trades_text = "\n".join(lines) if lines else "No executions recorded."
+
+    slippage_line = ""
+    if slip_deltas:
+        avg  = sum(slip_deltas) / len(slip_deltas)
+        sign = "+" if avg >= 0 else "-"
+        slippage_line = f"💹 Avg fill vs screener: {sign}${abs(avg):.2f} per contract"
+
+    # Discord field value cap is 1024 chars
+    if slippage_line:
+        combined = trades_text + "\n" + slippage_line
+        if len(combined) > 1024:
+            trades_text = trades_text[:1020 - len(slippage_line)] + "…"
+        trades_text = trades_text + "\n" + slippage_line
+
+    return trades_text, slippage_line
+
+
 def _yield_color(yield_pct: float) -> int:
     if yield_pct >= 1.0:
         return COLOR_GREEN
@@ -112,6 +208,10 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000):
         {"name": "Total Realized", "value": f"${total_realized:,.0f}", "inline": True},
         {"name": "​",         "value": "​",                  "inline": True},
     ]
+
+    trades_text, _ = _build_trades_section(state)
+    if trades_text:
+        fields.append({"name": "📋 This Week's Trades", "value": trades_text, "inline": False})
 
     best  = ytd.get("best_week")
     worst = ytd.get("worst_week")
