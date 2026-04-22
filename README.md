@@ -71,6 +71,7 @@ bash setup_ibc.sh
 `setup_ibc.sh` handles everything automatically:
 - Installs Homebrew, Python 3.13, git, and Node.js if missing
 - Creates the Python virtual environment and installs all dependencies
+- Downloads and installs IB Gateway if not already present
 - Downloads IBC, generates `~/IBC/config.ini` from your `.env`
 - Installs the `com.yourockfund.ibgateway` launchd service so IB Gateway starts on every login
 

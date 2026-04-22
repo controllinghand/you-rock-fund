@@ -9,7 +9,7 @@
 #  What it does:
 #    0. Checks and installs prerequisites (Homebrew, Python, git, Node.js)
 #    1. Loads .env credentials
-#    2. Verifies IB Gateway is installed
+#    2. Locates IB Gateway — downloads and installs it automatically if missing
 #    3. Downloads IBC (Interactive Brokers Controller) if absent
 #    4. Generates ~/IBC/config.ini from .env credentials
 #    5. Configures ~/IBC/StartGateway.sh with correct paths
@@ -181,16 +181,45 @@ find_gateway() {
 GATEWAY_APP=$(find_gateway 2>/dev/null) || true
 
 if [ -z "$GATEWAY_APP" ]; then
-    echo ""
-    warn "IB Gateway not found. Install it first:"
-    echo ""
-    echo "  1. Go to:  https://www.interactivebrokers.com/en/trading/ibgateway-stable.php"
-    echo "  2. Download the macOS offline installer"
-    echo "  3. Run the installer — IBKR may include the version in the path,"
-    echo "     e.g.  ~/Applications/IB Gateway 10.37/IB Gateway 10.37.app"
-    echo "  4. Re-run this script"
-    echo ""
-    fail "IB Gateway not installed"
+    info "IB Gateway not found — downloading automatically..."
+    GW_DMG_URL="https://download2.interactivebrokers.com/installers/ibgateway/stable-standalone/ibgateway-stable-standalone-macos-x64.dmg"
+    GW_DMG="/tmp/ibgateway-installer.dmg"
+
+    info "Downloading IB Gateway stable installer (~200 MB)..."
+    curl -fL --progress-bar "$GW_DMG_URL" -o "$GW_DMG" \
+        || fail "Download failed — check your internet connection"
+
+    info "Mounting installer DMG..."
+    MOUNT_POINT=$(hdiutil attach "$GW_DMG" -nobrowse -noautoopen 2>/dev/null \
+        | tail -1 | sed 's/.*\(\/Volumes\/.*\)/\1/' | sed 's/[[:space:]]*$//')
+    [ -n "$MOUNT_POINT" ] || fail "Failed to mount IB Gateway DMG"
+    info "Mounted at: $MOUNT_POINT"
+
+    # install4j apps have a binary inside Contents/MacOS — run with -q for silent install
+    INSTALLER_APP=$(find "$MOUNT_POINT" -maxdepth 2 -name "*.app" 2>/dev/null \
+        | grep -iv "uninstall" | sort | head -1)
+
+    if [ -n "$INSTALLER_APP" ]; then
+        INSTALLER_BIN=$(find "$INSTALLER_APP/Contents/MacOS" -maxdepth 1 \
+            -type f ! -name "*.dylib" 2>/dev/null | head -1)
+        [ -n "$INSTALLER_BIN" ] || fail "No executable found inside $INSTALLER_APP"
+        info "Running installer silently — this may take a minute..."
+        "$INSTALLER_BIN" -q 2>/dev/null || true
+    else
+        PKG=$(find "$MOUNT_POINT" -maxdepth 2 -name "*.pkg" 2>/dev/null | head -1)
+        [ -n "$PKG" ] || fail "No installer found inside mounted DMG at $MOUNT_POINT"
+        info "Running pkg installer..."
+        sudo installer -pkg "$PKG" -target / || fail "pkg installer failed"
+    fi
+
+    info "Unmounting DMG..."
+    hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
+    rm -f "$GW_DMG"
+
+    # Re-scan after install
+    GATEWAY_APP=$(find_gateway 2>/dev/null) || true
+    [ -n "$GATEWAY_APP" ] || fail "Installer finished but IB Gateway app not found — try running setup_ibc.sh again"
+    ok "IB Gateway installed automatically"
 fi
 
 info "  Found: $GATEWAY_APP"   # debug — confirms which path was matched
