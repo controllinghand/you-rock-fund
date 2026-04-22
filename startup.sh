@@ -241,8 +241,18 @@ if echo "$SCREEN_OUT" | grep -q "^OK"; then
     CAPF=$("$PYTHON" -c "print(f'\${int(\"$CAP\"):,}')" 2>/dev/null || echo "\$$CAP")
     PREMF=$("$PYTHON" -c "print(f'\${int(\"$PREM\"):,}')" 2>/dev/null || echo "\$$PREM")
     pass "Screener: $T targets → $P positions  $CAPF deployed  $PREMF premium  ${YLD}% yield"
+    DOW=$(date +%u)   # 1=Mon … 7=Sun
     if [ "$P" -eq 0 ]; then
-        fail "0 positions sized — pipeline would abort Monday"
+        if [ "$DOW" -le 2 ]; then
+            # Mon/Tue — trades are imminent, 0 positions is critical
+            fail "0 positions sized — pipeline would abort Monday"
+        elif [ "$DOW" -le 5 ]; then
+            # Wed/Thu/Fri — screener resets Saturday; mid-week zeros are normal
+            warn "0 positions now (mid-week) — new targets load Saturday 6 PM"
+        else
+            # Sat/Sun — Saturday screener should have run; worth flagging
+            warn "0 positions — screener preview may not have run yet"
+        fi
     elif [ "$P" -lt 5 ]; then
         warn "Only $P / 5 positions sized — auto-replacement will fill remaining"
     fi
@@ -262,14 +272,25 @@ printf "${YELLOW}%d warning(s)${NC}  "     "$WARN"
 printf "${RED}%d failed${NC}\n"             "$FAIL"
 echo "══════════════════════════════════════════════════════"
 
+DOW_FINAL=$(date +%u)   # 1=Mon … 7=Sun
+case "$DOW_FINAL" in
+    1|2) DAY_CTX="Monday trading is imminent" ;;
+    3)   DAY_CTX="next trade Monday 10:00 AM PST" ;;
+    4)   DAY_CTX="next trade Monday 10:00 AM PST" ;;
+    5)   DAY_CTX="next trade Monday 10:00 AM PST" ;;
+    6)   DAY_CTX="screener preview runs tonight 6:00 PM PST" ;;
+    7)   DAY_CTX="screener ran yesterday — targets ready for Monday" ;;
+    *)   DAY_CTX="next trade Monday 10:00 AM PST" ;;
+esac
+
 if   [ "$FAIL" -eq 0 ] && [ "$WARN" -eq 0 ]; then
     echo ""
-    printf "  ${BOLD}${GREEN}🟢  GO — All systems ready for Monday 10:00 AM PST${NC}\n"
+    printf "  ${BOLD}${GREEN}🟢  GO — All systems ready  (%s)${NC}\n" "$DAY_CTX"
 elif [ "$FAIL" -eq 0 ]; then
     echo ""
-    printf "  ${BOLD}${YELLOW}🟡  GO with warnings — review items above before Monday${NC}\n"
+    printf "  ${BOLD}${YELLOW}🟡  GO with warnings — review items above  (%s)${NC}\n" "$DAY_CTX"
 else
     echo ""
-    printf "  ${BOLD}${RED}🔴  NO-GO — resolve %d critical issue(s) before Monday${NC}\n" "$FAIL"
+    printf "  ${BOLD}${RED}🔴  NO-GO — resolve %d critical issue(s)  (%s)${NC}\n" "$FAIL" "$DAY_CTX"
 fi
 echo ""
