@@ -16,6 +16,10 @@ Each week the system runs a two-stage cycle:
 2. **Position Sizer** — allocates $250K across up to 5 positions at ~$50K each
 3. **Trader** — connects to IBKR, qualifies each contract, checks liquidity, and executes with limit-mid → limit-bid → market escalation
 
+## Getting Started
+
+New to IBKR? See the **[IBKR Account Setup Guide](IBKR_SETUP_GUIDE.md)** for a complete walkthrough — from creating your account to paper trading your first week.
+
 ## Prerequisites
 
 - Python 3.13+
