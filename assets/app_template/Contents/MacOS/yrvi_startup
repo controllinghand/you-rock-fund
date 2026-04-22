@@ -1,0 +1,9 @@
+#!/bin/bash
+PROJ="$HOME/you_rock_fund"
+osascript <<APPLESCRIPT
+tell application "Terminal"
+    activate
+    set w to do script "source '$PROJ/venv/bin/activate' && bash '$PROJ/startup.sh'; echo ''; printf 'Press any key to close this window...'; read -rn1; exit"
+    set bounds of front window to {80, 80, 1020, 720}
+end tell
+APPLESCRIPT

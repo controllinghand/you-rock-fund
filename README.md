@@ -143,7 +143,7 @@ tail -f ~/IBC/Logs/ibgateway_stderr.log
 
 **Double-click `YRVI Startup` on your Desktop** to run the pre-flight check. It opens a Terminal window, verifies IB Gateway is running, ensures the scheduler is alive, tests the IBKR API connection, and prints a full GO/NO-GO table.
 
-> `setup_ibc.sh` creates this shortcut automatically. It's a `.command` file — macOS opens it in Terminal with no special permissions required.
+> `setup_ibc.sh` builds the app automatically — it converts the You Rock Club logo into a proper `.icns` icon, assembles the `.app` bundle, and places it on your Desktop. No manual steps needed.
 
 Or run directly from the terminal:
 ```bash

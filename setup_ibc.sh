@@ -15,7 +15,7 @@
 #    5. Configures ~/IBC/StartGateway.sh with correct paths
 #    6. Installs and loads the launchd plist so IB Gateway
 #       starts automatically on every login / reboot
-#    7. Creates YRVI Startup.command shortcut on the Desktop
+#    7. Builds YRVI Startup.app with logo icon and places it on the Desktop
 # ─────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -345,17 +345,58 @@ else
     info "Logs:  tail -f $IBC_LOG_DIR/ibgateway_stderr.log"
 fi
 
-# ── Step 6: Desktop shortcut ──────────────────────────────────
+# ── Step 6: Desktop app bundle ────────────────────────────────
 echo ""
-echo "${BOLD}Step 6 / 7   Create Desktop shortcut${NC}"
+echo "${BOLD}Step 6 / 7   Create YRVI Startup app${NC}"
 echo "──────────────────────────────────────────────────────"
 
-COMMAND_FILE="$PROJ/yrvi_startup.command"
-DESKTOP_LINK="$HOME/Desktop/YRVI Startup.command"
+DESKTOP_APP="$HOME/Desktop/YRVI Startup.app"
+LOGO="$PROJ/assets/yourockclub_logo.webp"
+ICNS_SRC="$PROJ/assets/YRVI.icns"
 
-chmod +x "$COMMAND_FILE"
-ln -sf "$COMMAND_FILE" "$DESKTOP_LINK"
-ok "Desktop shortcut created — double-click YRVI Startup to check system status"
+# Remove old .command symlink if present
+rm -f "$HOME/Desktop/YRVI Startup.command"
+
+# Build bundle skeleton
+rm -rf "$DESKTOP_APP"
+mkdir -p "$DESKTOP_APP/Contents/MacOS"
+mkdir -p "$DESKTOP_APP/Contents/Resources"
+
+# Copy Info.plist and launcher script from repo template
+cp "$PROJ/assets/app_template/Contents/Info.plist" \
+   "$DESKTOP_APP/Contents/Info.plist"
+cp "$PROJ/assets/app_template/Contents/MacOS/yrvi_startup" \
+   "$DESKTOP_APP/Contents/MacOS/yrvi_startup"
+chmod +x "$DESKTOP_APP/Contents/MacOS/yrvi_startup"
+
+# Generate .icns from logo source (regenerate if logo is newer than cached icns)
+if [ -f "$LOGO" ] && { [ ! -f "$ICNS_SRC" ] || [ "$LOGO" -nt "$ICNS_SRC" ]; }; then
+    info "Generating app icon from logo..."
+    ICONSET="/tmp/YRVI_build.iconset"
+    rm -rf "$ICONSET" && mkdir "$ICONSET"
+    for size in 16 32 64 128 256 512; do
+        sips -z $size $size "$LOGO" --out "$ICONSET/icon_${size}x${size}.png" \
+            --setProperty format png 2>/dev/null
+        sips -z $((size*2)) $((size*2)) "$LOGO" \
+            --out "$ICONSET/icon_${size}x${size}@2x.png" \
+            --setProperty format png 2>/dev/null
+    done
+    sips -z 1024 1024 "$LOGO" --out "$ICONSET/icon_512x512@2x.png" \
+        --setProperty format png 2>/dev/null
+    iconutil -c icns "$ICONSET" -o "$ICNS_SRC"
+    rm -rf "$ICONSET"
+fi
+
+if [ -f "$ICNS_SRC" ]; then
+    cp "$ICNS_SRC" "$DESKTOP_APP/Contents/Resources/YRVI.icns"
+else
+    warn "Logo not found — app will use default icon (add assets/yourockclub_logo.webp to fix)"
+fi
+
+# Clear quarantine so macOS doesn't block an unsigned local app
+xattr -dr com.apple.quarantine "$DESKTOP_APP" 2>/dev/null || true
+
+ok "YRVI Startup.app created on Desktop — double-click to run pre-flight check"
 
 # ── Summary ───────────────────────────────────────────────────
 echo ""

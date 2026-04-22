@@ -2,10 +2,13 @@ venv/
 __pycache__/
 *.pyc
 .env
+.DS_Store
 nohup.out
 scheduler_stdout.log
 scheduler_stderr.log
 trade_log.txt
+wheel_log.txt
+risk_log.txt
 scheduler_log.txt
 state.json
 ytd_tracker.json
