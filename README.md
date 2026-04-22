@@ -141,9 +141,11 @@ tail -f ~/IBC/Logs/ibgateway_stderr.log
 
 ## Mac Startup (after any reboot)
 
-**Double-click `YRVI Startup` on the Desktop.** It verifies IB Gateway is running, ensures the scheduler is alive, tests the IBKR API connection, and prints a full GO/NO-GO table.
+**Double-click `YRVI Startup` on your Desktop** to run the pre-flight check. It opens a Terminal window, verifies IB Gateway is running, ensures the scheduler is alive, tests the IBKR API connection, and prints a full GO/NO-GO table.
 
-Or run from the terminal:
+> `setup_ibc.sh` creates this shortcut automatically. It's a `.command` file — macOS opens it in Terminal with no special permissions required.
+
+Or run directly from the terminal:
 ```bash
 bash ~/you_rock_fund/startup.sh
 ```

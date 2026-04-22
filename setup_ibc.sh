@@ -15,6 +15,7 @@
 #    5. Configures ~/IBC/StartGateway.sh with correct paths
 #    6. Installs and loads the launchd plist so IB Gateway
 #       starts automatically on every login / reboot
+#    7. Creates YRVI Startup.command shortcut on the Desktop
 # ─────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -322,7 +323,7 @@ ok "gatewaystartmacos.sh configured"
 
 # ── Step 5: Install and load launchd plist ────────────────────
 echo ""
-echo "${BOLD}Step 5 / 6   Install launchd service${NC}"
+echo "${BOLD}Step 5 / 7   Install launchd service${NC}"
 echo "──────────────────────────────────────────────────────"
 
 # Unload existing service if present (ignore errors)
@@ -344,6 +345,18 @@ else
     info "Logs:  tail -f $IBC_LOG_DIR/ibgateway_stderr.log"
 fi
 
+# ── Step 6: Desktop shortcut ──────────────────────────────────
+echo ""
+echo "${BOLD}Step 6 / 7   Create Desktop shortcut${NC}"
+echo "──────────────────────────────────────────────────────"
+
+COMMAND_FILE="$PROJ/yrvi_startup.command"
+DESKTOP_LINK="$HOME/Desktop/YRVI Startup.command"
+
+chmod +x "$COMMAND_FILE"
+ln -sf "$COMMAND_FILE" "$DESKTOP_LINK"
+ok "Desktop shortcut created — double-click YRVI Startup to check system status"
+
 # ── Summary ───────────────────────────────────────────────────
 echo ""
 echo "══════════════════════════════════════════════════════"
@@ -357,7 +370,8 @@ echo "    tail -f $IBC_LOG_DIR/ibgateway_stdout.log"
 echo "    tail -f $IBC_LOG_DIR/ibgateway_stderr.log"
 echo ""
 echo "  Test API connection:"
-echo "    bash startup.sh"
+echo "    Double-click  YRVI Startup  on your Desktop"
+echo "    — or —  bash startup.sh"
 echo ""
 echo "  Manual restart:"
 echo "    launchctl kickstart -k gui/\$(id -u)/$GATEWAY_LABEL"
