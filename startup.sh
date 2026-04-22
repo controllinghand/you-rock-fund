@@ -4,7 +4,7 @@
 #  Run after any reboot, or double-click "YRVI Startup" on Desktop
 # ─────────────────────────────────────────────────────────────
 
-PROJ="/Users/seanleegreer/you_rock_fund"
+PROJ=$(cd "$(dirname "$0")" && pwd)
 PYTHON="$PROJ/venv/bin/python3"
 PLIST_SRC="$PROJ/com.yourockfund.scheduler.plist"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.scheduler.plist"
@@ -104,10 +104,10 @@ if [ -n "$OLD_NOHUP" ]; then
     sleep 1
 fi
 
-# Ensure plist is in LaunchAgents
+# Ensure plist is in LaunchAgents (substitute __PROJ__ and __HOME__ placeholders)
 if [ ! -f "$PLIST_DEST" ]; then
-    warn "Plist not in LaunchAgents — copying..."
-    cp "$PLIST_SRC" "$PLIST_DEST"
+    warn "Plist not in LaunchAgents — installing..."
+    sed -e "s|__PROJ__|$PROJ|g" -e "s|__HOME__|$HOME|g" "$PLIST_SRC" > "$PLIST_DEST"
 fi
 
 # Check and start via launchd

@@ -9,18 +9,18 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/seanleegreer/you_rock_fund/venv/bin/python3</string>
-        <string>/Users/seanleegreer/you_rock_fund/scheduler.py</string>
+        <string>__PROJ__/venv/bin/python3</string>
+        <string>__PROJ__/scheduler.py</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/seanleegreer/you_rock_fund</string>
+    <string>__PROJ__</string>
 
     <!-- Logs — excluded from git via .gitignore -->
     <key>StandardOutPath</key>
-    <string>/Users/seanleegreer/you_rock_fund/scheduler_stdout.log</string>
+    <string>__PROJ__/scheduler_stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/seanleegreer/you_rock_fund/scheduler_stderr.log</string>
+    <string>__PROJ__/scheduler_stderr.log</string>
 
     <!-- Auto-start at login and restart after any crash -->
     <key>RunAtLoad</key>
@@ -35,9 +35,9 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
-        <string>/Users/seanleegreer</string>
+        <string>__HOME__</string>
         <key>PATH</key>
-        <string>/Users/seanleegreer/you_rock_fund/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>__PROJ__/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <!-- Flush Python output immediately so logs are written in real time -->
         <key>PYTHONUNBUFFERED</key>
         <string>1</string>

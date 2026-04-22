@@ -13,7 +13,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/seanleegreer/IBC/gatewaystartmacos.sh</string>
+        <string>__HOME__/IBC/gatewaystartmacos.sh</string>
         <string>-inline</string>
     </array>
 
@@ -31,9 +31,9 @@
     <integer>60</integer>
 
     <key>StandardOutPath</key>
-    <string>/Users/seanleegreer/IBC/Logs/ibgateway_stdout.log</string>
+    <string>__HOME__/IBC/Logs/ibgateway_stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/seanleegreer/IBC/Logs/ibgateway_stderr.log</string>
+    <string>__HOME__/IBC/Logs/ibgateway_stderr.log</string>
 
     <!-- Restrict to the user's Aqua (GUI login) session so the job inherits
          window server access. IB Gateway is a Java/Swing app that must display

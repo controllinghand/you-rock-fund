@@ -1,0 +1,9 @@
+ib_insync
+pandas
+requests
+apscheduler
+python-dotenv
+numpy
+python-dateutil
+tzlocal
+nest_asyncio

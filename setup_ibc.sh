@@ -7,17 +7,19 @@
 #    bash setup_ibc.sh
 #
 #  What it does:
-#    1. Verifies IB Gateway is installed
-#    2. Downloads IBC (Interactive Brokers Controller) if absent
-#    3. Generates ~/IBC/config.ini from .env credentials
-#    4. Configures ~/IBC/StartGateway.sh with correct paths
-#    5. Installs and loads the launchd plist so IB Gateway
+#    0. Checks and installs prerequisites (Homebrew, Python, git, Node.js)
+#    1. Loads .env credentials
+#    2. Verifies IB Gateway is installed
+#    3. Downloads IBC (Interactive Brokers Controller) if absent
+#    4. Generates ~/IBC/config.ini from .env credentials
+#    5. Configures ~/IBC/StartGateway.sh with correct paths
+#    6. Installs and loads the launchd plist so IB Gateway
 #       starts automatically on every login / reboot
 # ─────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-PROJ="/Users/seanleegreer/you_rock_fund"
+PROJ=$(cd "$(dirname "$0")" && pwd)
 IBC_DIR="$HOME/IBC"
 IBC_LOG_DIR="$IBC_DIR/Logs"
 IBC_VERSION="3.23.0"
@@ -45,8 +47,67 @@ echo "╚═══════════════════════�
 printf "${NC}"
 echo ""
 
+# ── Step 0: Prerequisites ─────────────────────────────────────
+echo "${BOLD}Step 0 / 6   Check and install prerequisites${NC}"
+echo "──────────────────────────────────────────────────────"
+
+# Homebrew
+if ! command -v brew &>/dev/null; then
+    info "Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # Add Homebrew to PATH for Apple Silicon
+    if [ -f "/opt/homebrew/bin/brew" ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    fi
+    ok "Homebrew installed"
+else
+    ok "Homebrew already installed"
+fi
+
+# Python 3.13
+if ! command -v python3 &>/dev/null || ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)" 2>/dev/null; then
+    info "Installing Python 3.13 via Homebrew..."
+    brew install python@3.13
+    ok "Python 3.13 installed"
+else
+    ok "Python $(python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
+fi
+
+# git
+if ! command -v git &>/dev/null; then
+    info "Installing git via Homebrew..."
+    brew install git
+    ok "git installed"
+else
+    ok "git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
+fi
+
+# Node.js (needed for Claude Code)
+if ! command -v node &>/dev/null; then
+    info "Installing Node.js via Homebrew..."
+    brew install node
+    ok "Node.js installed"
+else
+    ok "Node.js $(node --version) already installed"
+fi
+
+# Python venv + requirements
+VENV_DIR="$PROJ/venv"
+if [ ! -f "$VENV_DIR/bin/python3" ]; then
+    info "Creating Python virtual environment..."
+    python3 -m venv "$VENV_DIR"
+    ok "venv created at $VENV_DIR"
+else
+    ok "venv already exists at $VENV_DIR"
+fi
+
+info "Installing Python requirements..."
+"$VENV_DIR/bin/pip" install -q -r "$PROJ/requirements.txt"
+ok "Python packages installed"
+
 # ── Step 1: Load .env ─────────────────────────────────────────
-echo "${BOLD}Step 1 / 5   Load credentials from .env${NC}"
+echo ""
+echo "${BOLD}Step 1 / 6   Load credentials from .env${NC}"
 echo "──────────────────────────────────────────────────────"
 
 ENV_FILE="$PROJ/.env"
@@ -79,7 +140,7 @@ ok "Credentials loaded  (port=$IBKR_PORT  mode=$TRADING_MODE)"
 
 # ── Step 2: Verify IB Gateway installation ────────────────────
 echo ""
-echo "${BOLD}Step 2 / 5   Locate IB Gateway${NC}"
+echo "${BOLD}Step 2 / 6   Locate IB Gateway${NC}"
 echo "──────────────────────────────────────────────────────"
 
 # Search common install locations
@@ -162,7 +223,7 @@ GATEWAY_CONF="$HOME/Jts/ibgateway/$GATEWAY_VERSION_NUM"
 
 # ── Step 3: Install IBC ───────────────────────────────────────
 echo ""
-echo "${BOLD}Step 3 / 5   Install IBC $IBC_VERSION${NC}"
+echo "${BOLD}Step 3 / 6   Install IBC $IBC_VERSION${NC}"
 echo "──────────────────────────────────────────────────────"
 
 if [ -f "$IBC_DIR/IBC.jar" ] || [ -f "$IBC_DIR/gatewaystartmacos.sh" ]; then
@@ -184,7 +245,7 @@ mkdir -p "$IBC_LOG_DIR"
 
 # ── Step 4: Generate config.ini ───────────────────────────────
 echo ""
-echo "${BOLD}Step 4 / 5   Generate ~/IBC/config.ini${NC}"
+echo "${BOLD}Step 4 / 6   Generate ~/IBC/config.ini${NC}"
 echo "──────────────────────────────────────────────────────"
 
 CONFIG_DEST="$IBC_DIR/config.ini"
@@ -232,14 +293,15 @@ ok "gatewaystartmacos.sh configured"
 
 # ── Step 5: Install and load launchd plist ────────────────────
 echo ""
-echo "${BOLD}Step 5 / 5   Install launchd service${NC}"
+echo "${BOLD}Step 5 / 6   Install launchd service${NC}"
 echo "──────────────────────────────────────────────────────"
 
 # Unload existing service if present (ignore errors)
 launchctl unload "$PLIST_DEST" 2>/dev/null || true
 launchctl bootout "gui/$(id -u)/$GATEWAY_LABEL" 2>/dev/null || true
 
-cp "$PLIST_SRC" "$PLIST_DEST"
+# Substitute __HOME__ placeholder so plist works for any user
+sed -e "s|__HOME__|$HOME|g" "$PLIST_SRC" > "$PLIST_DEST"
 launchctl bootstrap "gui/$(id -u)" "$PLIST_DEST" 2>/dev/null || \
     launchctl load "$PLIST_DEST" 2>/dev/null || true
 

@@ -36,30 +36,25 @@ IB Gateway uses different ports than TWS. `IBKR_PORT=4002` is the correct defaul
 ```bash
 git clone https://github.com/controllinghand/you-rock-fund.git
 cd you-rock-fund
-
-python3.13 -m venv venv
-source venv/bin/activate
-
-pip install ib_insync apscheduler requests pandas numpy python-dotenv python-dateutil tzlocal nest_asyncio
 ```
 
-## Configuration
-
-Copy the template and fill in your values:
+Copy the template and fill in your credentials:
 
 ```bash
 cp .env.template .env
 ```
 
-Edit `.env`:
+Edit `.env` with your values:
 
 ```env
 IBKR_HOST=127.0.0.1
 IBKR_PORT=4002          # IB Gateway: 4002 = paper, 4001 = live
 IBKR_CLIENT_ID=1
 ACCOUNT=YOUR_IBKR_ACCOUNT_ID
+IBKR_USERNAME=your_ibkr_username
+IBKR_PASSWORD=your_ibkr_password
 RENDER_URL=https://yourockclub-ledger-sync.onrender.com/api/targets/csp
-RENDER_SECRET=YOUR_RENDER_SECRET_KEY
+RENDER_SECRET=get_from_fund_operator   # contact Sean for this value
 ```
 
 Fund parameters (capital, position targets, schedule) are constants in `config.py`.
@@ -70,14 +65,14 @@ IB Gateway is managed by IBC and launchd — it starts automatically at login an
 
 **One-time setup (run once per machine):**
 ```bash
-# Add credentials to .env first:
-#   IBKR_USERNAME=your_login
-#   IBKR_PASSWORD=your_password
-
-bash ~/you_rock_fund/setup_ibc.sh
+bash setup_ibc.sh
 ```
 
-`setup_ibc.sh` downloads IBC, generates `~/IBC/config.ini` from your `.env`, and installs the `com.yourockfund.ibgateway` launchd service.
+`setup_ibc.sh` handles everything automatically:
+- Installs Homebrew, Python 3.13, git, and Node.js if missing
+- Creates the Python virtual environment and installs all dependencies
+- Downloads IBC, generates `~/IBC/config.ini` from your `.env`
+- Installs the `com.yourockfund.ibgateway` launchd service so IB Gateway starts on every login
 
 > **Note:** IBKR's offline installer may include the version number in the install path,
 > e.g. `~/Applications/IB Gateway 10.37/IB Gateway 10.37.app`. `setup_ibc.sh`
