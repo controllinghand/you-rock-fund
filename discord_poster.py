@@ -103,8 +103,8 @@ def _build_trades_section(state: dict) -> tuple[str, str]:
         "unfilled":           "unfilled",
     }
 
-    lines          = []
-    slip_deltas    = []   # fill_price - screener_premium, per share
+    lines       = []
+    slip_deltas = []   # fill_price - screener_premium, per share
 
     for ex in executions:
         ticker     = ex.get("ticker", "?")
