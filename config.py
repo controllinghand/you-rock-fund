@@ -20,9 +20,6 @@ WEEKLY_INCOME_GOAL  = 0.01       # 1% per week
 IBKR_CLIENT_ID_WHEEL = 2        # wheel_manager.py
 IBKR_CLIENT_ID_RISK  = 3        # risk_manager.py
 
-# Risk management
-STOP_LOSS_PCT    = 0.10          # sell stock if 10% below assignment strike
-
 # Execution
 EXECUTE_HOUR_PST = 10            # 10AM PST Monday
 EXECUTE_MINUTE   = 0

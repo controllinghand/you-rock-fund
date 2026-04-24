@@ -6,26 +6,30 @@ detect_assignments() — Friday 4:15PM PST
     Persist to state.json["wheel_holdings"].
 
 run_wheel_check() — Monday 9:55AM PST (runs before CSP pipeline)
-    For each held stock:
-      - If current_price < assignment_strike * 0.90 → sell at market (stop loss)
-      - Else → sell covered call at assignment_strike, nearest Friday expiry
-    Writes monday_context to state.json for run_pipeline to consume.
-    Returns (freed_capital, skip_tickers).
+    For each held stock, four-step evaluation:
+      Step 1  Screener check: if ticker dropped from screener → sell at market
+      Step 2  Option chain: find highest call strike >= assigned_strike
+              where abs(delta) >= 0.20 (the "20-delta CC")
+      Step 3  Decision: sell CC if viable strike found; else sell at market
+      Step 4  Persist monday_context + wheel_activity to state.json
+
+    Returns (freed_capital, skip_tickers) for run_pipeline to consume.
 """
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from ib_insync import IB, Stock, Option, LimitOrder, MarketOrder
 
-from config import (
-    IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID_WHEEL, ACCOUNT, STOP_LOSS_PCT
-)
+from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID_WHEEL, ACCOUNT
+from screener import get_all_candidates
 
 STATE_FILE       = "state.json"
 MID_WAIT_SECS    = 120
 BID_WAIT_SECS    = 120
 MARKET_WAIT_SECS = 60
 MARKET_POLL_SECS = 5
+CC_DELTA_MIN     = 0.20   # minimum call delta required to sell a covered call
+MAX_CC_STRIKES   = 25     # max option strikes to evaluate per holding
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,7 +42,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-# ── State helpers ──────────────────────────────────────────────
+# ── State ──────────────────────────────────────────────────────
 
 def _load_state() -> dict:
     try:
@@ -53,7 +57,7 @@ def _save_state(state: dict):
         json.dump(state, f, indent=2)
 
 
-# ── IBKR helpers ───────────────────────────────────────────────
+# ── IBKR ───────────────────────────────────────────────────────
 
 def _connect() -> IB:
     ib = IB()
@@ -70,22 +74,6 @@ def _is_nan(val) -> bool:
         return True
 
 
-def _get_stock_price(ib: IB, ticker: str) -> float | None:
-    contract  = Stock(ticker, "SMART", "USD")
-    qualified = ib.qualifyContracts(contract)
-    if not qualified:
-        log.warning(f"  ⚠️  Could not qualify stock: {ticker}")
-        return None
-    data  = ib.reqMktData(qualified[0], snapshot=False)
-    ib.sleep(4)
-    price = data.last if not _is_nan(data.last) and data.last > 0 else \
-            data.close if not _is_nan(data.close) and data.close > 0 else \
-            data.bid   if not _is_nan(data.bid)   and data.bid   > 0 else None
-    ib.cancelMktData(qualified[0])
-    ib.sleep(0.5)
-    return round(float(price), 2) if price else None
-
-
 def _next_friday_expiry() -> str:
     today      = datetime.now().date()
     days_ahead = 4 - today.weekday()   # Monday=0 → days_ahead=4 (this Friday)
@@ -94,16 +82,133 @@ def _next_friday_expiry() -> str:
     return (today + timedelta(days=days_ahead)).strftime("%Y%m%d")
 
 
-# ── Order helpers ──────────────────────────────────────────────
+# ── Option chain ───────────────────────────────────────────────
 
-def _sell_stock_market(ib: IB, ticker: str, shares: int) -> dict:
+def _find_cc_strike(ib: IB, ticker: str, expiry: str,
+                    assigned_strike: float) -> tuple | None:
+    """
+    Scan the IBKR call option chain for the highest strike >= assigned_strike
+    on expiry where abs(delta) >= CC_DELTA_MIN.
+
+    Call delta decreases monotonically as strike increases (more OTM → lower
+    delta), so the highest qualifying strike is the closest to CC_DELTA_MIN
+    from above — the "20-delta covered call."
+
+    All market data streams are opened simultaneously and read after a single
+    sleep, making this O(1) in wall-clock time regardless of how many strikes
+    are checked.
+
+    Returns (strike, delta, mid_price) or None if no viable strike found.
+    """
+    stock = Stock(ticker, "SMART", "USD")
+    q_stock = ib.qualifyContracts(stock)
+    if not q_stock:
+        log.warning(f"  ⚠️  {ticker}: cannot qualify stock for option chain lookup")
+        return None
+
+    chains = ib.reqSecDefOptParams(ticker, "", "STK", q_stock[0].conId)
+    if not chains:
+        log.warning(f"  ⚠️  {ticker}: IBKR returned no option chain data")
+        return None
+
+    all_strikes: set[float] = set()
+    for chain in chains:
+        if expiry in chain.expirations:
+            all_strikes.update(chain.strikes)
+
+    if not all_strikes:
+        log.warning(f"  ⚠️  {ticker}: expiry {expiry} not listed in option chain")
+        return None
+
+    candidates = sorted(s for s in all_strikes if s >= assigned_strike)
+    if not candidates:
+        log.warning(f"  ⚠️  {ticker}: no strikes >= ${assigned_strike:.2f}")
+        return None
+
+    candidates = candidates[:MAX_CC_STRIKES]
+    log.info(f"  📊 {ticker}: scanning {len(candidates)} call strike(s) "
+             f"[${candidates[0]:.2f}–${candidates[-1]:.2f}] on {expiry}")
+
+    # Qualify all option contracts up front
+    q_pairs: list[tuple[float, object]] = []
+    for strike in candidates:
+        opt = Option(ticker, expiry, strike, "C", "SMART", currency="USD")
+        try:
+            q = ib.qualifyContracts(opt)
+            if q:
+                q_pairs.append((strike, q[0]))
+        except Exception:
+            continue
+
+    if not q_pairs:
+        log.warning(f"  ⚠️  {ticker}: no call contracts qualified on {expiry}")
+        return None
+
+    # Open all market data streams simultaneously — one sleep covers all
+    streams: dict[float, tuple[object, object]] = {}
+    for strike, contract in q_pairs:
+        data = ib.reqMktData(contract, genericTickList="13", snapshot=False)
+        streams[strike] = (contract, data)
+
+    ib.sleep(5)
+
+    # Read delta and mid from each stream, then cancel
+    results: list[tuple[float, float, float | None]] = []
+    for strike, (contract, data) in streams.items():
+        ib.cancelMktData(contract)
+
+        delta = None
+        for attr in ("modelGreeks", "lastGreeks"):
+            g = getattr(data, attr, None)
+            if g is not None:
+                d = getattr(g, "delta", None)
+                if d is not None and not _is_nan(d):
+                    delta = d
+                    break
+
+        if delta is None:
+            continue
+
+        bid = data.bid
+        ask = data.ask
+        mid = round((bid + ask) / 2, 2) \
+              if (not _is_nan(bid) and not _is_nan(ask) and bid > 0 and ask > 0) \
+              else None
+        results.append((strike, abs(delta), mid))
+
+    ib.sleep(0.5)
+
+    if not results:
+        log.warning(f"  ⚠️  {ticker}: no delta data returned for any call strike")
+        return None
+
+    results.sort(key=lambda x: x[0])  # ascending by strike
+
+    log.info(f"  {'Strike':>8}  {'Delta':>7}  {'Mid':>8}")
+    for strike, delta, mid in results:
+        flag    = "✅" if delta >= CC_DELTA_MIN else "❌"
+        mid_str = f"${mid:.2f}" if mid else "?"
+        log.info(f"  ${strike:>7.2f}  {delta:>6.3f}  {mid_str:>8}  {flag}")
+
+    # Highest qualifying strike (delta closest to CC_DELTA_MIN from above)
+    viable = [(s, d, m) for s, d, m in results if d >= CC_DELTA_MIN]
+    if not viable:
+        log.info(f"  ❌ No call strike with delta ≥ {CC_DELTA_MIN:.2f} available")
+        return None
+
+    return viable[-1]   # (strike, delta, mid)
+
+
+# ── Orders ─────────────────────────────────────────────────────
+
+def _sell_stock_market(ib: IB, ticker: str, shares: int, reason: str) -> dict:
     contract  = Stock(ticker, "SMART", "USD")
     qualified = ib.qualifyContracts(contract)
     if not qualified:
-        log.error(f"  ❌ Could not qualify {ticker} for stop loss sale")
+        log.error(f"  ❌ Cannot qualify {ticker} for sale")
         return {"status": "failed", "proceeds": 0.0, "fill_price": None}
 
-    log.info(f"  📤 STOP LOSS: SELL {shares} shares of {ticker} at market")
+    log.info(f"  📤 SELL {shares} shares {ticker} at market  [{reason}]")
     order = MarketOrder("SELL", shares, account=ACCOUNT, tif="DAY")
     trade = ib.placeOrder(qualified[0], order)
 
@@ -117,11 +222,11 @@ def _sell_stock_market(ib: IB, ticker: str, shares: int) -> dict:
         if status == "Filled" or (remaining == 0 and filled > 0):
             fill     = trade.orderStatus.avgFillPrice
             proceeds = round(shares * fill, 2)
-            log.info(f"  ✅ Stop loss filled: {shares}x {ticker} @ ${fill:.2f} = ${proceeds:,.0f}")
+            log.info(f"  ✅ Sold: {shares}x {ticker} @ ${fill:.2f} = ${proceeds:,.0f}")
             return {"status": "filled", "fill_price": fill, "proceeds": proceeds}
-        log.info(f"  ⏳ Stop loss status: {status} after {elapsed}s")
+        log.info(f"  ⏳ Sell status: {status} after {elapsed}s")
 
-    log.error(f"  ❌ Stop loss timed out for {ticker} — MANUAL ACTION REQUIRED")
+    log.error(f"  ❌ Share sale timed out for {ticker} — MANUAL ACTION REQUIRED")
     return {"status": "failed", "proceeds": 0.0, "fill_price": None}
 
 
@@ -141,7 +246,8 @@ def _sell_cc_with_escalation(ib: IB, contract, shares: int, ticker: str,
     }
 
     def try_limit(price: float, label: str, wait: int) -> bool:
-        log.info(f"  📤 {label}: SELL {num_contracts}x {ticker} CALL @ ${price:.2f}")
+        log.info(f"  📤 {label}: SELL {num_contracts}x {ticker} CALL "
+                 f"${strike:.2f} @ ${price:.2f}")
         order = LimitOrder("SELL", num_contracts, price, account=ACCOUNT, tif="DAY")
         trade = ib.placeOrder(contract, order)
         ib.sleep(wait)
@@ -164,7 +270,7 @@ def _sell_cc_with_escalation(ib: IB, contract, shares: int, ticker: str,
     if try_limit(bid_proxy, "limit_bid", BID_WAIT_SECS):
         return result
 
-    log.info(f"  📤 Market order: SELL {num_contracts}x {ticker} CALL")
+    log.info(f"  📤 Market order: SELL {num_contracts}x {ticker} CALL ${strike:.2f}")
     order = MarketOrder("SELL", num_contracts, account=ACCOUNT, tif="DAY")
     trade = ib.placeOrder(contract, order)
 
@@ -207,8 +313,8 @@ def _sell_cc_with_escalation(ib: IB, contract, shares: int, ticker: str,
 def detect_assignments():
     """
     Friday 4:15PM PST — scan IBKR for stock positions and reconcile
-    against known wheel_holdings. New assignments are added with their
-    CSP strike looked up from state.json executions.
+    against known wheel_holdings. New assignments are added with the
+    assigned strike looked up from that week's state.json positions.
     """
     log.info("\n" + "=" * 65)
     log.info(f"🔍 FRIDAY ASSIGNMENT DETECTION — "
@@ -217,11 +323,7 @@ def detect_assignments():
 
     state             = _load_state()
     existing_holdings = {h["ticker"]: h for h in state.get("wheel_holdings", [])}
-
-    # Build a strike lookup from last week's CSP executions + sized positions
-    strike_lookup = {}
-    for p in state.get("positions", []):
-        strike_lookup[p["ticker"]] = p["strike"]
+    strike_lookup     = {p["ticker"]: p["strike"] for p in state.get("positions", [])}
 
     ib = _connect()
     try:
@@ -239,38 +341,35 @@ def detect_assignments():
     updated = []
     for ticker, shares in stock_positions.items():
         if ticker in existing_holdings:
-            h          = existing_holdings[ticker]
+            h           = existing_holdings[ticker]
             h["shares"] = shares
             h["last_checked"] = datetime.now().isoformat()
             log.info(f"  ✅ {ticker}: {shares} shares (existing — updated count)")
         else:
-            assignment_strike = strike_lookup.get(ticker)
-            if assignment_strike is None:
-                log.warning(f"  ⚠️  {ticker}: CSP strike not found in state — "
-                             f"set assignment_strike manually in state.json")
-                assignment_strike = 0.0
-            stop_loss_price = round(assignment_strike * (1 - STOP_LOSS_PCT), 2)
+            assigned_strike = strike_lookup.get(ticker, 0.0)
+            if assigned_strike == 0.0:
+                log.warning(f"  ⚠️  {ticker}: strike not found in state — "
+                             f"set assigned_strike manually in state.json")
             h = {
-                "ticker":               ticker,
-                "shares":               shares,
-                "assignment_strike":    assignment_strike,
-                "assignment_date":      datetime.now().date().isoformat(),
-                "stop_loss_price":      stop_loss_price,
-                "cc_expiry":            None,
-                "cc_strike":            assignment_strike,
-                "cc_status":            "pending",
-                "cc_premium_collected": 0.0,
-                "current_price":        None,
-                "last_checked":         datetime.now().isoformat(),
-                "stop_loss_alert":      False,
+                "ticker":             ticker,
+                "shares":             shares,
+                "assigned_strike":    assigned_strike,
+                "assignment_date":    datetime.now().date().isoformat(),
+                "current_cc_strike":  None,
+                "current_cc_expiry":  None,
+                "current_cc_premium": 0.0,
+                "weeks_held":         0,
+                "cc_status":          "pending",
+                "current_price":      None,
+                "last_checked":       datetime.now().isoformat(),
             }
             log.info(f"  🆕 NEW ASSIGNMENT: {ticker}  {shares} shares  "
-                     f"strike ${assignment_strike:.2f}  stop ${stop_loss_price:.2f}")
+                     f"@ ${assigned_strike:.2f}")
         updated.append(h)
 
-    for ticker, h in existing_holdings.items():
+    for ticker in existing_holdings:
         if ticker not in stock_positions:
-            log.info(f"  📤 {ticker}: no longer held (assigned away or previously sold)")
+            log.info(f"  📤 {ticker}: no longer held (called away or sold)")
 
     state["wheel_holdings"] = updated
     _save_state(state)
@@ -280,12 +379,17 @@ def detect_assignments():
 
 def run_wheel_check() -> tuple[float, list]:
     """
-    Monday 9:55AM PST — evaluate each held stock position:
-      - below stop loss  → sell shares at market, free capital, skip in CSP
-      - above stop loss  → sell covered call at assignment_strike, nearest Friday
+    Monday 9:55AM PST — four-step evaluation for each held stock:
 
-    Writes monday_context to state.json for run_pipeline to consume.
-    Returns (freed_capital, skip_tickers).
+      Step 1  Screener check — if ticker no longer passes screener filters,
+              sell all shares at market and free capital.
+      Step 2  Option chain — query IBKR for call strikes >= assigned_strike
+              on the nearest Friday; collect delta for each.
+      Step 3  Decision — sell the highest-delta (≥ 0.20) call as a covered
+              call. If no such strike exists, sell shares at market.
+      Step 4  Persist monday_context and wheel_activity to state.json.
+
+    Returns (freed_capital, skip_tickers) consumed by run_pipeline.
     """
     log.info("\n" + "=" * 65)
     log.info(f"🔄 MONDAY WHEEL CHECK — "
@@ -296,8 +400,8 @@ def run_wheel_check() -> tuple[float, list]:
     holdings = state.get("wheel_holdings", [])
 
     empty_context = {
-        "skip_tickers": [], "freed_capital": 0.0,
-        "cc_premium": 0.0, "stop_loss_realized_pnl": 0.0,
+        "skip_tickers": [], "freed_capital": 0.0, "cc_premium": 0.0,
+        "shares_sold_pnl": 0.0, "wheel_activity": [],
         "updated": datetime.now().isoformat()
     }
 
@@ -307,119 +411,171 @@ def run_wheel_check() -> tuple[float, list]:
         _save_state(state)
         return 0.0, []
 
-    ib             = _connect()
-    expiry         = _next_friday_expiry()
-    freed_capital  = 0.0
-    skip_tickers   = []
-    cc_premium     = 0.0
-    stop_loss_pnl  = 0.0
+    # Screener candidates (Step 1 prerequisite)
+    log.info("\n📡 Fetching screener candidates...")
+    screener_tickers = get_all_candidates()
+    if screener_tickers:
+        log.info(f"  ✅ {len(screener_tickers)} ticker(s) pass screener filters")
+    else:
+        log.warning("  ⚠️  Screener returned 0 tickers — API may be down")
+        log.warning("  Skipping screener check; will attempt CCs for all holdings")
+
+    expiry          = _next_friday_expiry()
+    freed_capital   = 0.0
+    skip_tickers    = []
+    cc_premium      = 0.0
+    shares_sold_pnl = 0.0
+    wheel_activity  = []
+
+    ib = _connect()
 
     try:
         for h in holdings:
-            ticker            = h["ticker"]
-            shares            = h["shares"]
-            assignment_strike = h["assignment_strike"]
-            stop_loss_price   = h["stop_loss_price"]
+            ticker          = h["ticker"]
+            shares          = h.get("shares", 0)
+            assigned_strike = h.get("assigned_strike", 0.0)
+            weeks_held      = h.get("weeks_held", 0) + 1
+            h["weeks_held"] = weeks_held
+            h["last_checked"] = datetime.now().isoformat()
 
-            log.info(f"\n  [{ticker}]  {shares} shares  "
-                     f"strike ${assignment_strike:.2f}  stop ${stop_loss_price:.2f}")
+            log.info(f"\n  ── {ticker}  {shares} shares  "
+                     f"@ ${assigned_strike:.2f}  week {weeks_held} ──")
 
             if shares <= 0:
                 log.info(f"  ⏭️  {ticker}: 0 shares — skipping")
                 continue
 
-            current_price = _get_stock_price(ib, ticker)
-            if current_price is None:
-                log.warning(f"  ⚠️  {ticker}: could not get price — skipping this week")
+            # ── Step 1: Screener check ────────────────────────
+            if screener_tickers and ticker not in screener_tickers:
+                log.warning(f"  🚫 {ticker}: dropped from screener — selling shares")
+                result = _sell_stock_market(ib, ticker, shares, "dropped_screener")
+                if result["status"] == "filled":
+                    proceeds = result["proceeds"]
+                    realized = round(proceeds - (assigned_strike * shares), 2)
+                    freed_capital   += proceeds
+                    shares_sold_pnl += realized
+                    skip_tickers.append(ticker)
+                    h["shares"]    = 0
+                    h["cc_status"] = "sold_dropped_screener"
+                    wheel_activity.append({
+                        "ticker":       ticker,
+                        "action":       "sold_dropped_screener",
+                        "shares":       shares,
+                        "fill_price":   result["fill_price"],
+                        "proceeds":     proceeds,
+                        "realized_pnl": realized,
+                    })
+                    log.info(f"  📊 P&L: ${realized:,.0f}  Freed: ${proceeds:,.0f}")
+                else:
+                    log.error(f"  ❌ Sale FAILED for {ticker} — MANUAL ACTION REQUIRED")
                 continue
 
-            h["current_price"] = current_price
-            h["last_checked"]  = datetime.now().isoformat()
-            log.info(f"  📈 Current: ${current_price:.2f}  "
-                     f"({'🔴 BELOW' if current_price < stop_loss_price else '🟢 above'} stop)")
+            log.info(f"  ✅ {ticker} on screener — querying option chain")
 
-            # ── Stop loss ─────────────────────────────────────
-            if current_price < stop_loss_price:
-                log.warning(f"  🛑 STOP LOSS TRIGGERED — selling {shares} shares")
-                result = _sell_stock_market(ib, ticker, shares)
+            # ── Step 2: Find best CC strike ───────────────────
+            cc_info = _find_cc_strike(ib, ticker, expiry, assigned_strike)
+
+            # ── Step 3: Decision ──────────────────────────────
+            if cc_info is None:
+                log.warning(f"  ❌ {ticker}: no call strike with delta ≥ "
+                             f"{CC_DELTA_MIN:.2f} — selling shares")
+                result = _sell_stock_market(ib, ticker, shares, "no_viable_cc")
                 if result["status"] == "filled":
-                    proceeds    = result["proceeds"]
-                    realized    = round(proceeds - (assignment_strike * shares), 2)
+                    proceeds = result["proceeds"]
+                    realized = round(proceeds - (assigned_strike * shares), 2)
                     freed_capital   += proceeds
-                    stop_loss_pnl   += realized
+                    shares_sold_pnl += realized
                     skip_tickers.append(ticker)
-                    h["cc_status"] = "stop_loss_exit"
                     h["shares"]    = 0
-                    log.info(f"  📊 Realized P&L: ${realized:,.0f}  "
-                             f"Proceeds added to pool: ${proceeds:,.0f}")
+                    h["cc_status"] = "sold_no_viable_cc"
+                    wheel_activity.append({
+                        "ticker":       ticker,
+                        "action":       "sold_no_viable_cc",
+                        "shares":       shares,
+                        "fill_price":   result["fill_price"],
+                        "proceeds":     proceeds,
+                        "realized_pnl": realized,
+                    })
+                    log.info(f"  📊 P&L: ${realized:,.0f}  Freed: ${proceeds:,.0f}")
                 else:
-                    log.error(f"  ❌ Stop loss FAILED for {ticker} — MANUAL ACTION REQUIRED")
+                    log.error(f"  ❌ Sale FAILED for {ticker} — MANUAL ACTION REQUIRED")
+                continue
 
-            # ── Sell covered call ─────────────────────────────
+            cc_strike, cc_delta, cc_mid = cc_info
+            mid_display = f"${cc_mid:.2f}" if cc_mid else "?"
+            log.info(f"  🎯 Selling CC: ${cc_strike:.2f} strike  "
+                     f"delta={cc_delta:.3f}  mid={mid_display}")
+
+            cc_opt = Option(ticker, expiry, cc_strike, "C", "SMART", currency="USD")
+            try:
+                qualified = ib.qualifyContracts(cc_opt)
+            except Exception as e:
+                log.error(f"  ❌ Cannot qualify CC for {ticker}: {e}")
+                h["cc_status"] = "failed"
+                continue
+
+            if not qualified:
+                log.warning(f"  ⚠️  {ticker}: CC contract did not qualify")
+                h["cc_status"] = "failed"
+                continue
+
+            ref_mid      = cc_mid if (cc_mid and cc_mid > 0) else 0.50
+            order_result = _sell_cc_with_escalation(
+                ib, qualified[0], shares, ticker, cc_strike, ref_mid
+            )
+
+            if order_result["status"] in ("filled", "partial_fill"):
+                prem = order_result["premium_collected"]
+                cc_premium             += prem
+                h["current_cc_strike"]  = cc_strike
+                h["current_cc_expiry"]  = expiry
+                h["current_cc_premium"] = prem
+                h["cc_status"]          = "open"
+                wheel_activity.append({
+                    "ticker":     ticker,
+                    "action":     "cc_opened",
+                    "cc_strike":  cc_strike,
+                    "cc_delta":   round(cc_delta, 3),
+                    "cc_premium": prem,
+                    "cc_expiry":  expiry,
+                })
+                log.info(f"  💰 CC premium: ${prem:,.0f}")
             else:
-                log.info(f"  ☎️  Selling covered call @ ${assignment_strike:.2f}  expiry {expiry}")
-                cc_contract = Option(ticker, expiry, assignment_strike, "C", "SMART", currency="USD")
-                try:
-                    qualified = ib.qualifyContracts(cc_contract)
-                except Exception as e:
-                    log.error(f"  ❌ Could not qualify CC for {ticker}: {e}")
-                    continue
-
-                if not qualified:
-                    log.warning(f"  ⚠️  No CC contract: {ticker} ${assignment_strike} {expiry}")
-                    continue
-
-                # Get CC mid price
-                cc_data = ib.reqMktData(qualified[0], snapshot=False)
-                ib.sleep(4)
-                cc_bid = cc_data.bid
-                cc_ask = cc_data.ask
-                ib.cancelMktData(qualified[0])
-                ib.sleep(0.5)
-
-                if _is_nan(cc_bid) or _is_nan(cc_ask) or cc_bid <= 0 or cc_ask <= 0:
-                    ref_mid = 0.50
-                    log.warning(f"  ⚠️  No CC market data — using ${ref_mid:.2f} as mid reference")
-                else:
-                    ref_mid = round((cc_bid + cc_ask) / 2, 2)
-                    log.info(f"  CC market — Bid: ${cc_bid:.2f}  Ask: ${cc_ask:.2f}  "
-                             f"Mid: ${ref_mid:.2f}")
-
-                cc_result = _sell_cc_with_escalation(
-                    ib, qualified[0], shares, ticker, assignment_strike, ref_mid
-                )
-                if cc_result["status"] in ("filled", "partial_fill"):
-                    prem = cc_result["premium_collected"]
-                    cc_premium              += prem
-                    h["cc_expiry"]           = expiry
-                    h["cc_strike"]           = assignment_strike
-                    h["cc_status"]           = "open"
-                    h["cc_premium_collected"] = prem
-                    log.info(f"  💰 CC premium collected: ${prem:,.0f}")
-                else:
-                    h["cc_status"] = "failed"
-                    log.warning(f"  ⚠️  {ticker} CC sell failed — no covered call this week")
+                h["cc_status"] = "failed"
+                wheel_activity.append({
+                    "ticker": ticker, "action": "cc_failed", "cc_strike": cc_strike
+                })
+                log.warning(f"  ⚠️  {ticker}: CC order failed — no CC this week")
 
     finally:
         ib.disconnect()
 
-    # ── Persist context for run_pipeline ─────────────────────
+    # ── Step 4: Persist to state.json ────────────────────────
     state["wheel_holdings"] = holdings
     state["monday_context"] = {
-        "skip_tickers":          skip_tickers,
-        "freed_capital":         freed_capital,
-        "cc_premium":            cc_premium,
-        "stop_loss_realized_pnl": stop_loss_pnl,
-        "updated":               datetime.now().isoformat()
+        "skip_tickers":    skip_tickers,
+        "freed_capital":   freed_capital,
+        "cc_premium":      cc_premium,
+        "shares_sold_pnl": shares_sold_pnl,
+        "wheel_activity":  wheel_activity,
+        "updated":         datetime.now().isoformat()
     }
     _save_state(state)
 
+    exits   = [a for a in wheel_activity if "sold" in a["action"]]
+    ccs     = [a for a in wheel_activity if a["action"] == "cc_opened"]
+    cc_summ = "  ".join(
+        f"{a['ticker']} ${a['cc_strike']:.0f} δ{a['cc_delta']:.2f}" for a in ccs
+    )
+
     log.info("\n" + "=" * 65)
     log.info("📊 WHEEL CHECK SUMMARY")
-    log.info(f"   Stop loss exits:   {len(skip_tickers)}  {skip_tickers or ''}")
-    log.info(f"   Freed capital:     ${freed_capital:,.0f}")
-    log.info(f"   Stop loss P&L:     ${stop_loss_pnl:,.0f}")
-    log.info(f"   CC premium earned: ${cc_premium:,.0f}")
+    log.info(f"   Shares sold:      {len(exits)}  "
+             f"{[a['ticker'] for a in exits] or ''}")
+    log.info(f"   CCs opened:       {len(ccs)}  {cc_summ or ''}")
+    log.info(f"   Freed capital:    ${freed_capital:,.0f}")
+    log.info(f"   Shares sold P&L:  ${shares_sold_pnl:,.0f}")
+    log.info(f"   CC premium:       ${cc_premium:,.0f}")
     log.info("=" * 65)
 
     return freed_capital, skip_tickers

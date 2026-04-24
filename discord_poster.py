@@ -186,12 +186,12 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000):
     if not WEBHOOK_URL:
         return
 
-    pnl            = state.get("weekly_pnl", {})
-    week_start     = pnl.get("week_start", datetime.now(PST).strftime("%Y-%m-%d"))
-    csp_premium    = pnl.get("csp_premium", 0.0)
-    cc_premium     = pnl.get("cc_premium", 0.0)
-    stop_loss_pnl  = pnl.get("stop_loss_realized_pnl", 0.0)
-    total_realized = pnl.get("total_realized", 0.0)
+    pnl             = state.get("weekly_pnl", {})
+    week_start      = pnl.get("week_start", datetime.now(PST).strftime("%Y-%m-%d"))
+    csp_premium     = pnl.get("csp_premium", 0.0)
+    cc_premium      = pnl.get("cc_premium", 0.0)
+    shares_sold_pnl = pnl.get("shares_sold_pnl", 0.0)
+    total_realized  = pnl.get("total_realized", 0.0)
 
     yield_pct = total_realized / fund_budget * 100 if fund_budget else 0
     ytd       = _update_ytd(week_start, total_realized, fund_budget)
@@ -201,17 +201,55 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000):
     progress_pct = ytd["total_premium"] / ANNUAL_TARGET * 100
 
     fields = [
-        {"name": "CSP Premium",    "value": f"${csp_premium:,.0f}",    "inline": True},
-        {"name": "CC Premium",     "value": f"${cc_premium:,.0f}",     "inline": True},
-        {"name": "Stop Loss P&L",  "value": f"${stop_loss_pnl:,.0f}",  "inline": True},
-        {"name": "Week Yield",     "value": f"{yield_pct:.2f}%",       "inline": True},
-        {"name": "Total Realized", "value": f"${total_realized:,.0f}", "inline": True},
-        {"name": "​",         "value": "​",                  "inline": True},
+        {"name": "CSP Premium",      "value": f"${csp_premium:,.0f}",     "inline": True},
+        {"name": "CC Premium",       "value": f"${cc_premium:,.0f}",      "inline": True},
+        {"name": "Shares Sold P&L",  "value": f"${shares_sold_pnl:,.0f}", "inline": True},
+        {"name": "Week Yield",       "value": f"{yield_pct:.2f}%",        "inline": True},
+        {"name": "Total Realized",   "value": f"${total_realized:,.0f}",  "inline": True},
+        {"name": "​",           "value": "​",                   "inline": True},
     ]
 
     trades_text, _ = _build_trades_section(state)
     if trades_text:
         fields.append({"name": "📋 This Week's Trades", "value": trades_text, "inline": False})
+
+    # Wheel activity summary (shares sold + CCs opened this Monday)
+    wheel_activity = state.get("monday_context", {}).get("wheel_activity", [])
+    if wheel_activity:
+        activity_lines = []
+        for a in wheel_activity:
+            ticker = a.get("ticker", "?")
+            action = a.get("action", "")
+            if action == "cc_opened":
+                prem   = a.get("cc_premium", 0)
+                strike = a.get("cc_strike", 0)
+                delta  = a.get("cc_delta", 0)
+                activity_lines.append(
+                    f"🔄 **{ticker}** CC @ ${strike:.2f}  δ{delta:.2f}  "
+                    f"${prem:,.0f} premium"
+                )
+            elif action == "sold_dropped_screener":
+                pnl_val = a.get("realized_pnl", 0)
+                sign    = "+" if pnl_val >= 0 else ""
+                activity_lines.append(
+                    f"📤 **{ticker}** sold (dropped from screener)  "
+                    f"{sign}${pnl_val:,.0f} P&L"
+                )
+            elif action == "sold_no_viable_cc":
+                pnl_val = a.get("realized_pnl", 0)
+                sign    = "+" if pnl_val >= 0 else ""
+                activity_lines.append(
+                    f"📤 **{ticker}** sold (no 0.20-delta CC available)  "
+                    f"{sign}${pnl_val:,.0f} P&L"
+                )
+            elif action == "cc_failed":
+                activity_lines.append(f"⚠️ **{ticker}** CC order failed — no CC this week")
+        if activity_lines:
+            fields.append({
+                "name":   "🔄 Wheel Activity",
+                "value":  "\n".join(activity_lines)[:1024],
+                "inline": False
+            })
 
     best  = ytd.get("best_week")
     worst = ytd.get("worst_week")
@@ -229,11 +267,17 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000):
 
     holdings = [h for h in state.get("wheel_holdings", []) if h.get("shares", 0) > 0]
     if holdings:
-        lines = [
-            f"• **{h['ticker']}** {h['shares']} shares "
-            f"@ ${h['assignment_strike']:.2f} — CC {h.get('cc_status', '?')}"
-            for h in holdings
-        ]
+        lines = []
+        for h in holdings:
+            strike = h.get("assigned_strike", h.get("assignment_strike", 0))
+            cc_str = f"CC {h.get('cc_status', '?')}"
+            if h.get("current_cc_strike"):
+                cc_str = (f"CC @ ${h['current_cc_strike']:.2f}  "
+                          f"[{h.get('cc_status', '?')}]")
+            lines.append(
+                f"• **{h['ticker']}** {h['shares']} shares "
+                f"@ ${strike:.2f}  wk {h.get('weeks_held', 0)}  {cc_str}"
+            )
         fields.append({"name": "🔄 Wheel Holdings", "value": "\n".join(lines), "inline": False})
 
     _post({"embeds": [{
@@ -285,7 +329,7 @@ def post_assignment_alert(new_assignments: list):
 
     lines = [
         f"• **{a['ticker']}** — {a['shares']} shares "
-        f"@ ${a['assignment_strike']:.2f} (stop ${a['stop_loss_price']:.2f})"
+        f"@ ${a.get('assigned_strike', a.get('assignment_strike', 0)):.2f}"
         for a in new_assignments
     ]
 
@@ -295,7 +339,7 @@ def post_assignment_alert(new_assignments: list):
         "color":       COLOR_PURPLE,
         "fields": [{
             "name":   "Next Step",
-            "value":  "Wheel check runs Monday 9:55AM — stop loss check + covered calls",
+            "value":  "Wheel check runs Monday 9:55AM — screener check + 0.20-delta covered calls",
             "inline": False,
         }],
         "footer":    {"text": "You Rock Volatility Income Fund"},

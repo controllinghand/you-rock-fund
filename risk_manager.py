@@ -2,18 +2,21 @@
 Risk Manager — daily monitor (Tuesday–Thursday 9AM PST)
 
 run_daily_monitor():
-  - Connects to IBKR and fetches current price for each wheel holding
-  - Compares price to stop_loss_price (assignment_strike * 0.90)
-  - Logs stop loss alerts — actual sells happen Monday morning only
-  - Updates state.json with current prices, alert flags, and running P&L
+  - Fetches current price for each wheel holding from IBKR
+  - Checks whether each ticker still passes screener filters mid-week
+  - Reports CC strike, expiry days remaining, and unrealized P&L per holding
+  - Flags ⚠️ any holding whose ticker dropped from the screener
+    (expect those shares to be sold at next Monday's wheel check)
+  - Updates state.json with current prices and weekly P&L snapshot
 """
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 from ib_insync import IB, Stock
 
-from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID_RISK, ACCOUNT, STOP_LOSS_PCT
+from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID_RISK, ACCOUNT
+from screener import get_all_candidates
 
 STATE_FILE = "state.json"
 
@@ -83,27 +86,26 @@ def _build_weekly_pnl(state: dict) -> dict:
         e.get("premium_collected", 0) for e in executions
         if e.get("status") in ("filled", "partial_fill", "dry_run")
     )
-    cc_premium       = context.get("cc_premium", 0.0)
-    stop_loss_pnl    = context.get("stop_loss_realized_pnl", 0.0)
+    cc_premium      = context.get("cc_premium", 0.0)
+    shares_sold_pnl = context.get("shares_sold_pnl", 0.0)
 
-    # Unrealized P&L: (current_price - assignment_strike) * shares for active holdings
     unrealized = 0.0
     for h in holdings:
-        if h.get("shares", 0) > 0 and h.get("current_price") and h.get("assignment_strike"):
-            unrealized += (h["current_price"] - h["assignment_strike"]) * h["shares"]
+        if h.get("shares", 0) > 0 and h.get("current_price") and h.get("assigned_strike"):
+            unrealized += (h["current_price"] - h["assigned_strike"]) * h["shares"]
     unrealized = round(unrealized, 2)
 
-    total_realized = round(csp_premium + cc_premium + stop_loss_pnl, 2)
+    total_realized = round(csp_premium + cc_premium + shares_sold_pnl, 2)
 
     return {
-        "week_start":             state.get("run_date", "")[:10],
-        "csp_premium":            round(csp_premium, 2),
-        "cc_premium":             round(cc_premium, 2),
-        "stop_loss_realized_pnl": round(stop_loss_pnl, 2),
-        "total_realized":         total_realized,
-        "unrealized_stock_pnl":   unrealized,
-        "grand_total":            round(total_realized + unrealized, 2),
-        "last_updated":           datetime.now().isoformat()
+        "week_start":           state.get("run_date", "")[:10],
+        "csp_premium":          round(csp_premium, 2),
+        "cc_premium":           round(cc_premium, 2),
+        "shares_sold_pnl":      round(shares_sold_pnl, 2),
+        "total_realized":       total_realized,
+        "unrealized_stock_pnl": unrealized,
+        "grand_total":          round(total_realized + unrealized, 2),
+        "last_updated":         datetime.now().isoformat()
     }
 
 
@@ -112,8 +114,8 @@ def _build_weekly_pnl(state: dict) -> dict:
 def run_daily_monitor():
     """
     Tuesday–Thursday 9AM PST.
-    Fetches live prices for all wheel holdings, logs stop loss alerts,
-    and updates state.json with current prices and weekly P&L snapshot.
+    Checks each wheel holding: current price, CC status, unrealized P&L,
+    and screener eligibility. Flags positions at risk of Monday sale.
     """
     now = datetime.now()
     log.info("\n" + "=" * 65)
@@ -122,6 +124,14 @@ def run_daily_monitor():
 
     state    = _load_state()
     holdings = state.get("wheel_holdings", [])
+
+    # Fetch screener tickers once — used for all holdings
+    log.info("\n📡 Checking screener eligibility...")
+    screener_tickers = get_all_candidates()
+    if screener_tickers:
+        log.info(f"  {len(screener_tickers)} ticker(s) currently pass screener filters")
+    else:
+        log.warning("  ⚠️  Screener returned 0 results — screener check unavailable")
 
     if not holdings:
         log.info("📭 No wheel holdings to monitor")
@@ -132,66 +142,85 @@ def run_daily_monitor():
         return
 
     ib = _connect()
-    alerts = []
+    screener_dropped = []
 
     try:
-        log.info(f"\n  Monitoring {len(holdings)} wheel holding(s):")
-        log.info(f"  {'Ticker':<8} {'Shares':>6}  {'Strike':>8}  "
-                 f"{'Stop':>8}  {'Current':>8}  {'Buffer':>8}  {'Unreal P&L':>12}  Status")
-        log.info("  " + "-" * 75)
+        log.info(f"\n  Monitoring {len(holdings)} wheel holding(s):\n")
 
         for h in holdings:
-            ticker            = h["ticker"]
-            shares            = h.get("shares", 0)
-            assignment_strike = h.get("assignment_strike", 0.0)
-            stop_loss_price   = h.get("stop_loss_price", 0.0)
-            cc_status         = h.get("cc_status", "unknown")
+            ticker          = h["ticker"]
+            shares          = h.get("shares", 0)
+            assigned_strike = h.get("assigned_strike", 0.0)
+            cc_strike       = h.get("current_cc_strike")
+            cc_expiry_str   = h.get("current_cc_expiry")   # "YYYYMMDD" or None
+            cc_status       = h.get("cc_status", "unknown")
+            weeks_held      = h.get("weeks_held", 0)
 
             if shares <= 0:
-                log.info(f"  {ticker:<8}  (exited)")
+                log.info(f"  [{ticker}]  (exited position)")
                 continue
+
+            log.info(f"  ── {ticker}  {shares} shares  "
+                     f"assigned @ ${assigned_strike:.2f}  week {weeks_held} ──")
 
             current_price = _get_stock_price(ib, ticker)
             if current_price is None:
-                log.warning(f"  {ticker:<8}  ⚠️  price unavailable")
+                log.warning(f"    ⚠️  Price unavailable — skipping")
                 continue
 
             h["current_price"] = current_price
             h["last_checked"]  = now.isoformat()
 
-            buffer_pct  = ((current_price - stop_loss_price) / current_price) * 100
-            unrealized  = round((current_price - assignment_strike) * shares, 2)
-            at_risk     = current_price < stop_loss_price
+            unrealized = round((current_price - assigned_strike) * shares, 2)
+            pnl_icon   = "🟢" if unrealized >= 0 else "🔴"
 
-            if at_risk:
-                h["stop_loss_alert"] = True
-                alerts.append(ticker)
-                status_icon = "🚨 STOP ALERT"
-            elif buffer_pct < 3:
-                status_icon = "⚠️  approaching"
+            # CC expiry countdown
+            days_left = None
+            if cc_expiry_str:
+                try:
+                    exp_date  = datetime.strptime(cc_expiry_str, "%Y%m%d").date()
+                    days_left = (exp_date - now.date()).days
+                except ValueError:
+                    pass
+
+            if cc_strike and days_left is not None:
+                cc_line = (f"CC @ ${cc_strike:.2f}  exp {cc_expiry_str}"
+                           f"  ({days_left}d remaining)  [{cc_status}]")
             else:
-                h["stop_loss_alert"] = False
-                status_icon = "✅ safe"
+                cc_line = f"CC: {cc_status}"
 
-            log.info(f"  {ticker:<8} {shares:>6}  ${assignment_strike:>7.2f}  "
-                     f"${stop_loss_price:>7.2f}  ${current_price:>7.2f}  "
-                     f"{buffer_pct:>7.1f}%  ${unrealized:>10,.0f}  {status_icon}  "
-                     f"[CC: {cc_status}]")
+            # Screener status
+            if screener_tickers:
+                on_screener = ticker in screener_tickers
+                if not on_screener:
+                    screener_dropped.append(ticker)
+                screener_line = ("✅ on screener"
+                                 if on_screener
+                                 else "⚠️  DROPPED FROM SCREENER — expect sale Monday")
+            else:
+                screener_line = "? (screener API unavailable)"
+
+            log.info(f"    Price:      ${current_price:.2f}  "
+                     f"(assigned @ ${assigned_strike:.2f})")
+            log.info(f"    Unrealized: {pnl_icon} ${unrealized:,.0f}")
+            log.info(f"    {cc_line}")
+            log.info(f"    Screener:   {screener_line}")
 
     finally:
         ib.disconnect()
 
-    # ── Stop loss alerts ──────────────────────────────────────
-    if alerts:
+    # Summary alerts
+    if screener_dropped:
         log.warning("\n" + "!" * 65)
-        log.warning(f"  🚨 STOP LOSS ALERT: {alerts}")
-        log.warning(f"  These positions are below stop loss price.")
+        log.warning(f"  ⚠️  SCREENER DROP: {screener_dropped}")
+        log.warning(f"  These tickers no longer pass screener filters.")
         log.warning(f"  They will be sold next Monday 9:55AM PST.")
         log.warning("!" * 65)
     else:
-        log.info(f"\n  ✅ All {len(holdings)} holding(s) above stop loss threshold")
+        active = [h for h in holdings if h.get("shares", 0) > 0]
+        if active:
+            log.info(f"\n  ✅ All {len(active)} holding(s) still pass screener")
 
-    # ── Update state ──────────────────────────────────────────
     state["wheel_holdings"] = holdings
     pnl = _build_weekly_pnl(state)
     state["weekly_pnl"] = pnl
@@ -205,7 +234,7 @@ def _log_pnl_summary(pnl: dict):
     log.info(f"   Week of:              {pnl.get('week_start', 'N/A')}")
     log.info(f"   CSP premium:         ${pnl.get('csp_premium', 0):>10,.0f}")
     log.info(f"   CC premium:          ${pnl.get('cc_premium', 0):>10,.0f}")
-    log.info(f"   Stop loss P&L:       ${pnl.get('stop_loss_realized_pnl', 0):>10,.0f}")
+    log.info(f"   Shares sold P&L:     ${pnl.get('shares_sold_pnl', 0):>10,.0f}")
     log.info(f"   ─────────────────────────────")
     log.info(f"   Total realized:      ${pnl.get('total_realized', 0):>10,.0f}")
     log.info(f"   Unrealized stock:    ${pnl.get('unrealized_stock_pnl', 0):>10,.0f}")

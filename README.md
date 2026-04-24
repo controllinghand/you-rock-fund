@@ -21,11 +21,11 @@ An automated Python algorithmic options trading system that generates weekly inc
 
 2. **Position Sizer** — allocates $250K across up to 5 positions (~$50K each, last position gets remainder up to $70K max)
 
-3. **Wheel Manager** — Monday 9:55 AM:
-   - Detects stocks assigned from Friday's expiry
-   - Stock above 90% of assignment strike → sell covered call at strike, nearest Friday
-   - Stock below 90% of assignment strike → sell shares at market (stop loss)
-   - Freed capital flows back into that week's CSP pool
+3. **Wheel Manager** — Monday 9:55 AM (four-step logic per holding):
+   - **Step 1 — Screener check:** if ticker no longer passes screener filters → sell shares at market and free capital
+   - **Step 2 — Option chain:** query IBKR for CALL options on the nearest Friday, strike ≥ assigned strike; collect delta for each candidate
+   - **Step 3 — Decision:** sell the highest-delta (≥ 0.20) covered call found. If no strike with delta ≥ 0.20 exists → sell shares at market
+   - **Step 4 — Accounting:** freed capital (from any sales) returns to the CSP pool; sold tickers are skipped in that week's screener
 
 4. **Trader** — connects to IBKR, qualifies contracts, checks liquidity (spread ≤ 20%, OI ≥ 100), executes with limit-mid → limit-bid → market escalation; automatically replaces failed positions with the next ranked ticker
 
@@ -55,7 +55,8 @@ Each cycle generates income whether the option expires or gets exercised.
 | Delta filter | Only sell puts with delta ≤ 0.21 (~20Δ) |
 | Buffer requirement | Strike must be ≥ 5% below current price |
 | Liquidity check | Spread ≤ 20%, Open Interest ≥ 100 |
-| Stop loss | Sell shares if price drops 10% below assignment strike |
+| Screener exit | Sell shares if ticker drops from screener filters |
+| Delta exit | Sell shares if no CC strike with delta ≥ 0.20 available |
 | Earnings protection | Skip tickers with earnings within 7 days |
 | Auto-replacement | Failed position → automatically try next ranked ticker |
 

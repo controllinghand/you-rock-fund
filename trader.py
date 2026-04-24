@@ -334,14 +334,21 @@ def execute_positions(sized_positions: list, extra_targets: list = None) -> list
              f"Total Premium: ${total_premium:,.0f}")
     log.info("=" * 65)
 
+    # Merge with existing state so wheel_holdings and monday_context survive
+    try:
+        with open("state.json") as f:
+            existing = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        existing = {}
+    existing.update({
+        "run_date":      datetime.now().isoformat(),
+        "positions":     sized_positions,
+        "executions":    results,
+        "filled_count":  filled_count,
+        "total_premium": total_premium
+    })
     with open("state.json", "w") as f:
-        json.dump({
-            "run_date":      datetime.now().isoformat(),
-            "positions":     sized_positions,
-            "executions":    results,
-            "filled_count":  filled_count,
-            "total_premium": total_premium
-        }, f, indent=2)
+        json.dump(existing, f, indent=2)
     log.info("💾 Results saved to state.json")
 
     return results

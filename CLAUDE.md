@@ -54,7 +54,7 @@ config.py          → All fund parameters, IBKR credentials, API keys
 screener.py        → Fetches CSP candidates from Render API, filters + scores them
 position_sizer.py  → Allocates capital across up to 5 positions (accepts budget override)
 trader.py          → IBKR CSP execution: qualify → liquidity check → limit/market escalation
-wheel_manager.py   → Assignment detection, stop loss sells, covered call execution
+wheel_manager.py   → Assignment detection, screener-based exits, 0.20-delta covered call execution
 risk_manager.py    → Daily price checks, stop loss alerts, weekly P&L tracking
 scheduler.py       → APScheduler orchestration for all 5 jobs
 state.json         → Persisted system state (see schema below)
@@ -79,37 +79,42 @@ Each module connects with a distinct client ID to allow concurrent connections:
 
   "wheel_holdings": [            // stock positions being wheeled
     {
-      "ticker":               "OKLO",
-      "shares":               800,
-      "assignment_strike":    60.00,
-      "assignment_date":      "2026-04-25",
-      "stop_loss_price":      54.00,
-      "cc_expiry":            "20260501",
-      "cc_strike":            60.00,
-      "cc_status":            "open",  // pending|open|failed|stop_loss_exit
-      "cc_premium_collected": 320.0,
-      "current_price":        62.50,
-      "last_checked":         "ISO timestamp",
-      "stop_loss_alert":      false
+      "ticker":             "OKLO",
+      "shares":             800,
+      "assigned_strike":    60.00,
+      "assignment_date":    "2026-04-25",
+      "current_cc_strike":  62.00,
+      "current_cc_expiry":  "20260501",
+      "current_cc_premium": 320.0,
+      "weeks_held":         1,
+      "cc_status":          "open",  // pending|open|failed|sold_dropped_screener|sold_no_viable_cc
+      "current_price":      62.50,
+      "last_checked":       "ISO timestamp"
     }
   ],
 
   "monday_context": {            // written by wheel_check, read by run_pipeline
-    "skip_tickers":          ["OKLO"],
-    "freed_capital":         54000.0,
-    "cc_premium":            320.0,
-    "stop_loss_realized_pnl": -4800.0,
-    "updated":               "ISO timestamp"
+    "skip_tickers":    ["OKLO"],
+    "freed_capital":   54000.0,
+    "cc_premium":      320.0,
+    "shares_sold_pnl": -4800.0,
+    "wheel_activity":  [         // one entry per holding processed
+      {"ticker": "OKLO", "action": "cc_opened", "cc_strike": 62.0,
+       "cc_delta": 0.22, "cc_premium": 320.0, "cc_expiry": "20260501"},
+      {"ticker": "FOO",  "action": "sold_dropped_screener",
+       "shares": 500, "proceeds": 30000.0, "realized_pnl": -2000.0}
+    ],
+    "updated":         "ISO timestamp"
   },
 
   "weekly_pnl": {
-    "week_start":             "2026-04-27",
-    "csp_premium":            4088,
-    "cc_premium":             320,
-    "stop_loss_realized_pnl": -4800,
-    "total_realized":         -392,
-    "unrealized_stock_pnl":   2000,
-    "grand_total":            1608
+    "week_start":           "2026-04-27",
+    "csp_premium":          4088,
+    "cc_premium":           320,
+    "shares_sold_pnl":      -4800,
+    "total_realized":       -392,
+    "unrealized_stock_pnl": 2000,
+    "grand_total":          1608
   }
 }
 ```
@@ -118,16 +123,18 @@ Each module connects with a distinct client ID to allow concurrent connections:
 
 ```
 9:55AM wheel_check:
-  → get live prices from IBKR
-  → stop loss: sell shares at market, add proceeds to freed_capital
-  → above stop loss: sell covered call at assignment_strike, nearest Friday
-  → write monday_context to state.json
+  → call get_all_candidates() to get screener ticker set
+  → Step 1: if ticker not in screener → sell at market (freed_capital += proceeds)
+  → Step 2: query IBKR option chain for calls >= assigned_strike on nearest Friday
+  → Step 3: if highest call delta >= 0.20 → sell CC; else → sell at market
+  → write monday_context (skip_tickers, freed_capital, cc_premium,
+    shares_sold_pnl, wheel_activity) to state.json
 
 10:00AM run_pipeline:
   → read monday_context (skip_tickers, freed_capital)
   → filter skip_tickers from screener results
   → size_all(targets, budget=TOTAL_FUND_BUDGET + freed_capital)
-  → execute CSPs
+  → execute CSPs (merges into existing state.json — wheel_holdings preserved)
   → assemble and write weekly_pnl
 ```
 
@@ -140,9 +147,10 @@ All orders — CSPs, covered calls, stop loss sells — use the same escalation:
 ### Key Rules
 
 - Never buy back covered calls
-- Stop loss sells happen Monday 9:55AM only (daily monitor just alerts)
-- Freed stop-loss capital is added to that week's CSP deployment budget
-- Stop-loss tickers are skipped in the same week's CSP screener
+- Sell shares Monday 9:55AM if: ticker dropped from screener OR no CC strike with delta ≥ 0.20
+- Freed capital from share sales is added to that week's CSP deployment budget
+- Sold tickers are skipped in the same week's CSP screener
+- Daily monitor (Tue–Thu) alerts if a ticker drops from screener mid-week
 
 ## Key Configuration (config.py)
 

@@ -150,7 +150,7 @@ def run_pipeline():
         freed_capital = context.get("freed_capital", 0.0)
 
         if skip_tickers:
-            log.info(f"  🚫 Skipping tickers (stop loss exits): {skip_tickers}")
+            log.info(f"  🚫 Skipping tickers (wheel exits): {skip_tickers}")
         if freed_capital > 0:
             log.info(f"  💰 Freed capital added to pool: ${freed_capital:,.0f}")
 
@@ -172,20 +172,20 @@ def run_pipeline():
         results = execute_positions(positions, extra_targets=filtered_targets)
 
         # ── Build weekly P&L ──────────────────────────────────
-        filled        = [r for r in results if r.get("status") in ("filled", "dry_run", "partial_fill")]
-        csp_premium   = sum(r.get("premium_collected", 0) for r in results)
-        cc_premium    = context.get("cc_premium", 0.0)
-        stop_loss_pnl = context.get("stop_loss_realized_pnl", 0.0)
-        total_realized = round(csp_premium + cc_premium + stop_loss_pnl, 2)
+        filled          = [r for r in results if r.get("status") in ("filled", "dry_run", "partial_fill")]
+        csp_premium     = sum(r.get("premium_collected", 0) for r in results)
+        cc_premium      = context.get("cc_premium", 0.0)
+        shares_sold_pnl = context.get("shares_sold_pnl", 0.0)
+        total_realized  = round(csp_premium + cc_premium + shares_sold_pnl, 2)
 
-        state = _load_state()   # reload — execute_positions may have written it
+        state = _load_state()   # reload — execute_positions merges but may have written it
         state["weekly_pnl"] = {
-            "week_start":             now.strftime("%Y-%m-%d"),
-            "csp_premium":            round(csp_premium, 2),
-            "cc_premium":             round(cc_premium, 2),
-            "stop_loss_realized_pnl": round(stop_loss_pnl, 2),
-            "total_realized":         total_realized,
-            "last_updated":           datetime.now().isoformat()
+            "week_start":       now.strftime("%Y-%m-%d"),
+            "csp_premium":      round(csp_premium, 2),
+            "cc_premium":       round(cc_premium, 2),
+            "shares_sold_pnl":  round(shares_sold_pnl, 2),
+            "total_realized":   total_realized,
+            "last_updated":     datetime.now().isoformat()
         }
         with open(STATE_FILE, "w") as f:
             json.dump(state, f, indent=2)
@@ -196,6 +196,7 @@ def run_pipeline():
 
         log.info(f"\n✅ Done — {len(filled)}/{NUM_POSITIONS} CSP fills  |  "
                  f"CSP ${csp_premium:,.0f}  CC ${cc_premium:,.0f}  "
+                 f"Shares sold P&L ${shares_sold_pnl:,.0f}  "
                  f"Total realized ${total_realized:,.0f}")
 
     except Exception as e:

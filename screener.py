@@ -104,5 +104,40 @@ def get_top_targets(n=5):
     print("\n" + "=" * 65)
     return top
 
+def get_all_candidates() -> set[str]:
+    """
+    Returns the set of ticker symbols that currently pass all screener filters.
+    No printing — designed for programmatic use by wheel_manager and risk_manager.
+    Returns an empty set on API error so callers can handle gracefully.
+    """
+    try:
+        response = requests.get(URL, params=PARAMS, timeout=60)
+        response.raise_for_status()
+        rows = response.json().get("rows", [])
+    except Exception as e:
+        print(f"⚠️  get_all_candidates: API error — {e}")
+        return set()
+
+    rows = [r for r in rows if r.get("wheel_fit") == "Wheel-ready"]
+
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def _dte(r):
+        try:
+            exp = datetime.strptime(r["expiry"], "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=timezone.utc)
+            return (exp - today).days
+        except Exception:
+            return 99
+
+    rows = [r for r in rows if _dte(r) >= MIN_DAYS_TO_EXPIRY]
+    rows = [r for r in rows if abs(r.get("put_20d_delta", -1)) <= MAX_DELTA]
+
+    for r in rows:
+        r["_buffer_pct"] = (r["latest_price"] - r["put_20d_strike"]) / r["latest_price"]
+    rows = [r for r in rows if r["_buffer_pct"] >= MIN_BUFFER_PCT]
+
+    return {r["ticker"] for r in rows}
+
+
 if __name__ == "__main__":
     get_top_targets(5)
