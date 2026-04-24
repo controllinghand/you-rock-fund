@@ -228,6 +228,14 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000):
                     f"🔄 **{ticker}** CC @ ${strike:.2f}  δ{delta:.2f}  "
                     f"${prem:,.0f} premium"
                 )
+            elif action == "sold_earnings_this_week":
+                dte     = a.get("days_to_earnings", "?")
+                pnl_val = a.get("realized_pnl", 0)
+                sign    = "+" if pnl_val >= 0 else ""
+                activity_lines.append(
+                    f"🚨 **{ticker}** sold — earnings this week ({dte} days)  "
+                    f"{sign}${pnl_val:,.0f} P&L"
+                )
             elif action == "sold_dropped_screener":
                 pnl_val = a.get("realized_pnl", 0)
                 sign    = "+" if pnl_val >= 0 else ""

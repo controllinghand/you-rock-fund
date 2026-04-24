@@ -379,15 +379,17 @@ def detect_assignments():
 
 def run_wheel_check() -> tuple[float, list]:
     """
-    Monday 9:55AM PST — four-step evaluation for each held stock:
+    Monday 9:55AM PST — five-step evaluation for each held stock:
 
       Step 1  Screener check — if ticker no longer passes screener filters,
               sell all shares at market and free capital.
-      Step 2  Option chain — query IBKR for call strikes >= assigned_strike
+      Step 2  Earnings check — if earnings fall within 0–4 days (Mon–Fri
+              this week), sell all shares to avoid earnings risk.
+      Step 3  Option chain — query IBKR for call strikes >= assigned_strike
               on the nearest Friday; collect delta for each.
-      Step 3  Decision — sell the highest-delta (≥ 0.20) call as a covered
+      Step 4  Decision — sell the highest-delta (≥ 0.20) call as a covered
               call. If no such strike exists, sell shares at market.
-      Step 4  Persist monday_context and wheel_activity to state.json.
+      Step 5  Persist monday_context and wheel_activity to state.json.
 
     Returns (freed_capital, skip_tickers) consumed by run_pipeline.
     """
@@ -411,14 +413,14 @@ def run_wheel_check() -> tuple[float, list]:
         _save_state(state)
         return 0.0, []
 
-    # Screener candidates (Step 1 prerequisite)
+    # Screener candidates (Steps 1 & 2 prerequisite)
     log.info("\n📡 Fetching screener candidates...")
-    screener_tickers = get_all_candidates()
-    if screener_tickers:
-        log.info(f"  ✅ {len(screener_tickers)} ticker(s) pass screener filters")
+    candidate_info = get_all_candidates()   # dict[ticker, {days_to_earnings, ...}]
+    if candidate_info:
+        log.info(f"  ✅ {len(candidate_info)} ticker(s) pass screener filters")
     else:
         log.warning("  ⚠️  Screener returned 0 tickers — API may be down")
-        log.warning("  Skipping screener check; will attempt CCs for all holdings")
+        log.warning("  Skipping screener/earnings checks; will attempt CCs for all holdings")
 
     expiry          = _next_friday_expiry()
     freed_capital   = 0.0
@@ -446,7 +448,7 @@ def run_wheel_check() -> tuple[float, list]:
                 continue
 
             # ── Step 1: Screener check ────────────────────────
-            if screener_tickers and ticker not in screener_tickers:
+            if candidate_info and ticker not in candidate_info:
                 log.warning(f"  🚫 {ticker}: dropped from screener — selling shares")
                 result = _sell_stock_market(ib, ticker, shares, "dropped_screener")
                 if result["status"] == "filled":
@@ -470,12 +472,52 @@ def run_wheel_check() -> tuple[float, list]:
                     log.error(f"  ❌ Sale FAILED for {ticker} — MANUAL ACTION REQUIRED")
                 continue
 
-            log.info(f"  ✅ {ticker} on screener — querying option chain")
+            log.info(f"  ✅ {ticker} on screener — checking earnings")
 
-            # ── Step 2: Find best CC strike ───────────────────
+            # ── Step 2: Earnings check ────────────────────────
+            ticker_info      = candidate_info.get(ticker, {})
+            days_to_earnings = ticker_info.get("days_to_earnings")
+            try:
+                earnings_this_week = (
+                    days_to_earnings is not None
+                    and 0 <= int(days_to_earnings) <= 4
+                )
+            except (TypeError, ValueError):
+                earnings_this_week = False
+
+            if earnings_this_week:
+                dte_int = int(days_to_earnings)
+                log.warning(f"  🚨 {ticker}: earnings in {dte_int} day(s) — "
+                             f"selling shares to avoid earnings risk")
+                result = _sell_stock_market(ib, ticker, shares, "earnings_this_week")
+                if result["status"] == "filled":
+                    proceeds = result["proceeds"]
+                    realized = round(proceeds - (assigned_strike * shares), 2)
+                    freed_capital   += proceeds
+                    shares_sold_pnl += realized
+                    skip_tickers.append(ticker)
+                    h["shares"]    = 0
+                    h["cc_status"] = "sold_earnings_this_week"
+                    wheel_activity.append({
+                        "ticker":           ticker,
+                        "action":           "sold_earnings_this_week",
+                        "days_to_earnings": dte_int,
+                        "shares":           shares,
+                        "fill_price":       result["fill_price"],
+                        "proceeds":         proceeds,
+                        "realized_pnl":     realized,
+                    })
+                    log.info(f"  📊 P&L: ${realized:,.0f}  Freed: ${proceeds:,.0f}")
+                else:
+                    log.error(f"  ❌ Sale FAILED for {ticker} — MANUAL ACTION REQUIRED")
+                continue
+
+            log.info(f"  ✅ {ticker}: no earnings this week — querying option chain")
+
+            # ── Step 3: Find best CC strike ───────────────────
             cc_info = _find_cc_strike(ib, ticker, expiry, assigned_strike)
 
-            # ── Step 3: Decision ──────────────────────────────
+            # ── Step 4: Decision ──────────────────────────────
             if cc_info is None:
                 log.warning(f"  ❌ {ticker}: no call strike with delta ≥ "
                              f"{CC_DELTA_MIN:.2f} — selling shares")
@@ -550,7 +592,7 @@ def run_wheel_check() -> tuple[float, list]:
     finally:
         ib.disconnect()
 
-    # ── Step 4: Persist to state.json ────────────────────────
+    # ── Step 5: Persist to state.json ────────────────────────
     state["wheel_holdings"] = holdings
     state["monday_context"] = {
         "skip_tickers":    skip_tickers,
@@ -568,11 +610,17 @@ def run_wheel_check() -> tuple[float, list]:
         f"{a['ticker']} ${a['cc_strike']:.0f} δ{a['cc_delta']:.2f}" for a in ccs
     )
 
+    earnings_exits = [a for a in wheel_activity if a["action"] == "sold_earnings_this_week"]
+
     log.info("\n" + "=" * 65)
     log.info("📊 WHEEL CHECK SUMMARY")
-    log.info(f"   Shares sold:      {len(exits)}  "
-             f"{[a['ticker'] for a in exits] or ''}")
-    log.info(f"   CCs opened:       {len(ccs)}  {cc_summ or ''}")
+    log.info(f"   Screener dropped: "
+             f"{[a['ticker'] for a in exits if a['action'] == 'sold_dropped_screener'] or 'none'}")
+    log.info(f"   Earnings exits:   "
+             f"{[a['ticker'] for a in earnings_exits] or 'none'}")
+    log.info(f"   No-delta exits:   "
+             f"{[a['ticker'] for a in exits if a['action'] == 'sold_no_viable_cc'] or 'none'}")
+    log.info(f"   CCs opened:       {len(ccs)}  {cc_summ or 'none'}")
     log.info(f"   Freed capital:    ${freed_capital:,.0f}")
     log.info(f"   Shares sold P&L:  ${shares_sold_pnl:,.0f}")
     log.info(f"   CC premium:       ${cc_premium:,.0f}")

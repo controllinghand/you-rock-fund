@@ -104,11 +104,12 @@ def get_top_targets(n=5):
     print("\n" + "=" * 65)
     return top
 
-def get_all_candidates() -> set[str]:
+def get_all_candidates() -> dict[str, dict]:
     """
-    Returns the set of ticker symbols that currently pass all screener filters.
+    Returns a dict of ticker → metadata for tickers that pass all screener filters.
+    Metadata keys: days_to_earnings (int|None), earnings_date (str|None).
     No printing — designed for programmatic use by wheel_manager and risk_manager.
-    Returns an empty set on API error so callers can handle gracefully.
+    Returns an empty dict on API error so callers handle gracefully.
     """
     try:
         response = requests.get(URL, params=PARAMS, timeout=60)
@@ -116,7 +117,7 @@ def get_all_candidates() -> set[str]:
         rows = response.json().get("rows", [])
     except Exception as e:
         print(f"⚠️  get_all_candidates: API error — {e}")
-        return set()
+        return {}
 
     rows = [r for r in rows if r.get("wheel_fit") == "Wheel-ready"]
 
@@ -136,7 +137,13 @@ def get_all_candidates() -> set[str]:
         r["_buffer_pct"] = (r["latest_price"] - r["put_20d_strike"]) / r["latest_price"]
     rows = [r for r in rows if r["_buffer_pct"] >= MIN_BUFFER_PCT]
 
-    return {r["ticker"] for r in rows}
+    return {
+        r["ticker"]: {
+            "days_to_earnings": r.get("days_to_earnings"),
+            "earnings_date":    r.get("earnings_date"),
+        }
+        for r in rows
+    }
 
 
 if __name__ == "__main__":

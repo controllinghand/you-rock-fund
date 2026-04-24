@@ -189,7 +189,8 @@ def run_daily_monitor():
             else:
                 cc_line = f"CC: {cc_status}"
 
-            # Screener status
+            # Screener status + earnings check
+            # screener_tickers is dict[str, dict] from get_all_candidates()
             if screener_tickers:
                 on_screener = ticker in screener_tickers
                 if not on_screener:
@@ -197,14 +198,27 @@ def run_daily_monitor():
                 screener_line = ("✅ on screener"
                                  if on_screener
                                  else "⚠️  DROPPED FROM SCREENER — expect sale Monday")
+
+                # Earnings flag
+                dte = screener_tickers.get(ticker, {}).get("days_to_earnings")
+                try:
+                    earnings_soon = dte is not None and 0 <= int(dte) <= 4
+                except (TypeError, ValueError):
+                    earnings_soon = False
+                earnings_line = (f"⚠️  EARNINGS THIS WEEK ({int(dte)} days) — "
+                                 f"expect sale Monday"
+                                 if earnings_soon else None)
             else:
                 screener_line = "? (screener API unavailable)"
+                earnings_line = None
 
             log.info(f"    Price:      ${current_price:.2f}  "
                      f"(assigned @ ${assigned_strike:.2f})")
             log.info(f"    Unrealized: {pnl_icon} ${unrealized:,.0f}")
             log.info(f"    {cc_line}")
             log.info(f"    Screener:   {screener_line}")
+            if earnings_line:
+                log.warning(f"    Earnings:   {earnings_line}")
 
     finally:
         ib.disconnect()
