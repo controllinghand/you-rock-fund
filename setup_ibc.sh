@@ -52,13 +52,29 @@ echo ""
 echo "${BOLD}Step 0 / 6   Check and install prerequisites${NC}"
 echo "──────────────────────────────────────────────────────"
 
+# Detect CPU architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "arm64" ]; then
+    ok "Apple Silicon (M4) detected"
+else
+    ok "Intel (x86_64) detected"
+fi
+
+# Ensure Homebrew is in PATH regardless of whether it's already installed
+if [ -f /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [ -f /usr/local/bin/brew ]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+fi
+
 # Homebrew
 if ! command -v brew &>/dev/null; then
     info "Installing Homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    # Add Homebrew to PATH for Apple Silicon
-    if [ -f "/opt/homebrew/bin/brew" ]; then
+    if [ -f /opt/homebrew/bin/brew ]; then
         eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -f /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
     fi
     ok "Homebrew installed"
 else
@@ -183,7 +199,11 @@ GATEWAY_APP=$(find_gateway 2>/dev/null) || true
 
 if [ -z "$GATEWAY_APP" ]; then
     info "IB Gateway not found — downloading automatically..."
-    GW_DMG_URL="https://download2.interactivebrokers.com/installers/ibgateway/stable-standalone/ibgateway-stable-standalone-macos-x64.dmg"
+    if [ "$ARCH" = "arm64" ]; then
+        GW_DMG_URL="https://download2.interactivebrokers.com/installers/ibgateway/stable-standalone/ibgateway-stable-standalone-macos-arm64.dmg"
+    else
+        GW_DMG_URL="https://download2.interactivebrokers.com/installers/ibgateway/stable-standalone/ibgateway-stable-standalone-macos-x64.dmg"
+    fi
     GW_DMG="/tmp/ibgateway-installer.dmg"
 
     info "Downloading IB Gateway stable installer (~200 MB)..."

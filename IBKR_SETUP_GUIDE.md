@@ -177,20 +177,25 @@ IBKR is required by law to verify your identity. Have these ready:
 
 ---
 
-## Step 7 — Fund Your Account
+### Step 7 — Fund Your Account (Optional for Paper Trading)
 
-YRVI deploys **$250,000** across 5 positions (~$50K each). You need at least this amount in your account before going live.
+**Paper Trading — $0 required** ✅
+You can start paper trading immediately with NO real money.
+IBKR gives you $1M in virtual cash to practice with.
+This is how we recommend everyone starts with YRVI.
 
-**Funding methods:**
+**Live Trading — when you're ready**
+When you're confident in the system and want to use real money:
+- Minimum: any amount (no IBKR minimum for cash accounts)
+- YRVI is designed for $250,000 deployed capital
+- You can start smaller and scale up as you get comfortable
+- Transfer options:
+  * ACH transfer (free, 3-5 days)
+  * Wire transfer (faster, small fee)
+  * ACATS transfer from another broker
 
-| Method | Speed | Cost | Notes |
-|--------|-------|------|-------|
-| ACH bank transfer | 3–5 business days | Free | Most common; requires linking your bank |
-| Wire transfer | 1–2 business days | ~$25 fee from your bank | Faster for first deposit |
-| ACATS transfer | 5–10 business days | Free | For moving a portfolio from another broker |
-| Check | 5–7 business days | Free | Mail to IBKR — slowest option |
-
-> **Important:** Funds must fully settle before options orders can use them as collateral. ACH transfers are typically available immediately for trading but take 3–5 days to fully clear.
+💡 Pro Tip: Run paper trading for at least 4-8 weeks before
+using real money. The system needs to prove itself first!
 
 ---
 
@@ -246,11 +251,14 @@ IBKR_PORT=4001          # 4001 = live trading
 ## Step 10 — Download IB Gateway
 
 > **Note:** If you're running `setup_ibc.sh` on a Mac, IB Gateway is downloaded and installed automatically. You can skip this step.
+> `setup_ibc.sh` detects your CPU architecture and downloads the correct installer automatically — both Intel (x86_64) and Apple Silicon (M4/ARM) Macs are supported.
 
 For manual installation:
 
 1. Go to: **https://www.interactivebrokers.com/en/trading/ibgateway-stable.php**
-2. Click **"Download IB Gateway Stable"** (choose macOS)
+2. Click **"Download IB Gateway Stable"** — choose the correct macOS version for your Mac:
+   - **Apple Silicon (M4/M3/M2/M1):** choose the `arm64` / Apple Silicon build
+   - **Intel Mac:** choose the `x64` / Intel build
 3. Run the `.dmg` installer — the default install location is fine
 4. **Do not open IB Gateway manually** — `setup_ibc.sh` configures it to launch automatically via launchd
 

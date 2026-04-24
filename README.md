@@ -281,6 +281,11 @@ No code changes needed. If `DISCORD_WEBHOOK_URL` is absent or blank, all Discord
 
 A dedicated Mac Mini is the recommended setup for set-and-forget automated trading.
 
+**Supported hardware:**
+- ✅ Supported: Mac Mini M4 (Apple Silicon/ARM)
+- ✅ Supported: Intel Mac (x86_64)
+- ✅ Supported: Any Mac running macOS Sequoia or later
+
 ### Minimum Requirements
 | Component | Spec | Notes |
 |-----------|------|-------|
