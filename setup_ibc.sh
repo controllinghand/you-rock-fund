@@ -371,7 +371,7 @@ echo "${BOLD}Step 6 / 7   Create YRVI Startup app${NC}"
 echo "──────────────────────────────────────────────────────"
 
 DESKTOP_APP="$HOME/Desktop/YRVI Startup.app"
-LOGO="$PROJ/assets/yourockclub_logo.webp"
+LOGO="$PROJ/assets/yrvi_logo.png"
 ICNS_SRC="$PROJ/assets/YRVI.icns"
 
 # Remove old .command symlink if present
@@ -409,7 +409,7 @@ fi
 if [ -f "$ICNS_SRC" ]; then
     cp "$ICNS_SRC" "$DESKTOP_APP/Contents/Resources/YRVI.icns"
 else
-    warn "Logo not found — app will use default icon (add assets/yourockclub_logo.webp to fix)"
+    warn "Logo not found — app will use default icon (add assets/yrvi_logo.png to fix)"
 fi
 
 # Clear quarantine so macOS doesn't block an unsigned local app
