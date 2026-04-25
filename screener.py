@@ -97,7 +97,7 @@ def lookup_earnings_date(ticker: str) -> int | None:
             days = (earnings_date - today).days
             cache[ticker] = {"earnings_date": earnings_date_str, "looked_up": today.isoformat()}
             _save_earnings_cache(cache)
-            print(f"🔍 Looked up earnings for {ticker}: {earnings_date_str} ({days} days)")
+            print(f"🔍 Fallback earnings lookup for {ticker} (not in screener data): {earnings_date_str} ({days} days)")
             return days
         else:
             cache[ticker] = {"earnings_date": None, "looked_up": today.isoformat()}
