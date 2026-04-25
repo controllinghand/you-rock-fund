@@ -27,3 +27,6 @@ EXECUTE_MINUTE   = 0
 # Screener API
 RENDER_URL    = os.environ["RENDER_URL"]
 RENDER_SECRET = os.environ["RENDER_SECRET"]
+
+# Anthropic API (for earnings date web lookup fallback)
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
