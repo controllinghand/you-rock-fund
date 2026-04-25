@@ -50,24 +50,31 @@ def size_position(target: dict, available_capital: float, is_last: bool = False)
     }
 
 def size_all(targets: list, budget: float = None) -> list:
-    sized            = []
     remaining_budget = budget if budget is not None else TOTAL_FUND_BUDGET
     effective_budget = remaining_budget
-    target_index     = 0
 
-    while len(sized) < NUM_POSITIONS and target_index < len(targets):
-        target  = targets[target_index]
-        is_last = (len(sized) == NUM_POSITIONS - 1)
-        result  = size_position(target, remaining_budget, is_last=is_last)
-
+    # Pass 1: size positions #2–#5 at TARGET from targets[1:]
+    rest_sized   = []
+    target_index = 1
+    while len(rest_sized) < NUM_POSITIONS - 1 and target_index < len(targets):
+        result = size_position(targets[target_index], remaining_budget, is_last=False)
         if result:
-            sized.append(result)
+            rest_sized.append(result)
             remaining_budget -= result["capital_used"]
-
         target_index += 1
 
+    # Pass 2: allocate remainder to #1 (highest-scored), capped at MAX_PER_POSITION
+    top_sized = []
+    if targets:
+        result = size_position(targets[0], remaining_budget, is_last=True)
+        if result:
+            top_sized.append(result)
+            remaining_budget -= result["capital_used"]
+
+    sized = top_sized + rest_sized
+
     print("\n💼 Position Sizing Summary")
-    print(f"   Fund Budget: ${effective_budget:,.0f}  |  Target: ${TARGET_PER_POSITION:,.0f}/pos  |  Max last pos: ${MAX_PER_POSITION:,.0f}")
+    print(f"   Fund Budget: ${effective_budget:,.0f}  |  Target: ${TARGET_PER_POSITION:,.0f}/pos (#2–5)  |  Max #1: ${MAX_PER_POSITION:,.0f}")
     print("=" * 65)
 
     total_capital = 0
@@ -75,7 +82,7 @@ def size_all(targets: list, budget: float = None) -> list:
 
     for i, p in enumerate(sized, 1):
         bz       = "✅" if p["buyzone"] else "❌"
-        last_tag = " ← remainder (max $70K)" if i == len(sized) else ""
+        last_tag = " ← remainder (max $70K)" if i == 1 else ""
         over     = " ⚡" if p["capital_used"] > TARGET_PER_POSITION else ""
         print(f"\n  #{i} {p['ticker']}  (Buyzone: {bz}){last_tag}")
         print(f"    Strike:      ${p['strike']:.2f}")
