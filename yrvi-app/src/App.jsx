@@ -18,10 +18,10 @@ const NAV = [
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
+      <div className="flex h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-white overflow-hidden">
         {/* Sidebar */}
-        <nav className="w-52 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
-          <NavLink to="/" className="px-5 py-4 border-b border-gray-800 flex items-center">
+        <nav className="w-52 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col shrink-0">
+          <NavLink to="/" className="px-5 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center">
             <img src="/yrvi_logo.png" alt="YRVI" className="w-[60px]" />
           </NavLink>
 
@@ -35,7 +35,7 @@ export default function App() {
                   `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     isActive
                       ? 'bg-blue-600 text-white'
-                      : 'text-gray-500 hover:bg-gray-800 hover:text-gray-200'
+                      : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-200'
                   }`
                 }
               >
@@ -45,7 +45,7 @@ export default function App() {
             ))}
           </div>
 
-          <div className="px-5 py-3 border-t border-gray-800 text-xs text-gray-700">
+          <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-800 text-xs text-gray-400 dark:text-gray-700">
             Dashboard v1.0
           </div>
         </nav>

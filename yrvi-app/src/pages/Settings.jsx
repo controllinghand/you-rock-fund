@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback } from 'react'
 import axios from 'axios'
-import { Save, AlertTriangle, CheckCircle, Bell, Send } from 'lucide-react'
+import { Save, AlertTriangle, CheckCircle, Bell, Send, Sun, Moon, Monitor } from 'lucide-react'
+import { useThemeContext } from '../ThemeProvider.jsx'
 
 function SliderRow({ label, value, min, max, step = 1, format = v => v, onChange }) {
   return (
     <div className="flex items-center gap-4">
       <div className="w-40 shrink-0">
-        <div className="text-gray-300 text-sm">{label}</div>
-        <div className="text-blue-400 font-medium text-sm">{format(value)}</div>
+        <div className="text-gray-700 dark:text-gray-300 text-sm">{label}</div>
+        <div className="text-blue-500 dark:text-blue-400 font-medium text-sm">{format(value)}</div>
       </div>
       <input
         type="range"
@@ -18,7 +19,7 @@ function SliderRow({ label, value, min, max, step = 1, format = v => v, onChange
         onChange={e => onChange(Number(e.target.value))}
         className="flex-1 accent-blue-500 h-1.5"
       />
-      <div className="flex gap-1 text-xs text-gray-600 w-28 shrink-0 justify-end">
+      <div className="flex gap-1 text-xs text-gray-400 dark:text-gray-600 w-28 shrink-0 justify-end">
         <span>{format(min)}</span>
         <span>–</span>
         <span>{format(max)}</span>
@@ -29,8 +30,8 @@ function SliderRow({ label, value, min, max, step = 1, format = v => v, onChange
 
 function Section({ title, emoji, children }) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-      <div className="text-white font-semibold text-sm flex items-center gap-2">
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 space-y-4">
+      <div className="text-gray-900 dark:text-white font-semibold text-sm flex items-center gap-2">
         <span>{emoji}</span>
         {title}
       </div>
@@ -43,8 +44,8 @@ function Toggle({ label, sub, checked, onChange }) {
   return (
     <label className="flex items-center justify-between cursor-pointer select-none">
       <div>
-        <div className="text-gray-300 text-sm">{label}</div>
-        {sub && <div className="text-gray-600 text-xs mt-0.5">{sub}</div>}
+        <div className="text-gray-700 dark:text-gray-300 text-sm">{label}</div>
+        {sub && <div className="text-gray-500 dark:text-gray-600 text-xs mt-0.5">{sub}</div>}
       </div>
       <button
         type="button"
@@ -52,7 +53,7 @@ function Toggle({ label, sub, checked, onChange }) {
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-          checked ? 'bg-blue-600' : 'bg-gray-700'
+          checked ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'
         }`}
       >
         <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
@@ -63,19 +64,27 @@ function Toggle({ label, sub, checked, onChange }) {
   )
 }
 
+const THEME_OPTIONS = [
+  { value: 'system', label: 'System', icon: Monitor },
+  { value: 'light',  label: 'Light',  icon: Sun },
+  { value: 'dark',   label: 'Dark',   icon: Moon },
+]
+
 export default function SettingsPage() {
-  const [settings, setSettings]       = useState(null)
-  const [original, setOriginal]       = useState(null)
-  const [saving, setSaving]           = useState(false)
-  const [testing, setTesting]         = useState(false)
-  const [msg, setMsg]                 = useState(null)
-  const [showModal, setShowModal]     = useState(false)
-  const [confirm, setConfirm]         = useState('')
-  const [switching, setSwitching]     = useState(false)
-  const [liveReady, setLiveReady]     = useState(null)
-  const [liveMissing, setLiveMissing] = useState([])
-  const [liveChecking, setLiveChecking] = useState(false)
+  const [settings, setSettings]           = useState(null)
+  const [original, setOriginal]           = useState(null)
+  const [saving, setSaving]               = useState(false)
+  const [testing, setTesting]             = useState(false)
+  const [msg, setMsg]                     = useState(null)
+  const [showModal, setShowModal]         = useState(false)
+  const [confirm, setConfirm]             = useState('')
+  const [switching, setSwitching]         = useState(false)
+  const [liveReady, setLiveReady]         = useState(null)
+  const [liveMissing, setLiveMissing]     = useState([])
+  const [liveChecking, setLiveChecking]   = useState(false)
   const [accountMasked, setAccountMasked] = useState('')
+
+  const { theme, setTheme } = useThemeContext()
 
   useEffect(() => {
     axios.get('/api/settings').then(r => {
@@ -173,7 +182,7 @@ export default function SettingsPage() {
     <div className="max-w-2xl space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-white mb-1">Settings</h1>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-1">Settings</h1>
           <div className="text-gray-500 text-sm">Hot-reloads on every API call — no restart needed</div>
         </div>
         <button
@@ -200,94 +209,58 @@ export default function SettingsPage() {
 
       {/* Fund Settings */}
       <Section title="Fund Settings" emoji="💰">
-        <SliderRow
-          label="Fund Budget"
-          value={settings.fund_budget}
-          min={10000}
-          max={2000000}
-          step={10000}
-          format={v => `$${v.toLocaleString()}`}
-          onChange={v => set('fund_budget', v)}
-        />
-        <SliderRow
-          label="# Positions"
-          value={settings.num_positions}
-          min={1}
-          max={10}
-          format={v => `${v} positions`}
-          onChange={v => set('num_positions', v)}
-        />
-        <SliderRow
-          label="Min Position"
-          value={settings.min_position_size}
-          min={5000}
-          max={100000}
-          step={5000}
-          format={v => `$${v.toLocaleString()}`}
-          onChange={v => set('min_position_size', v)}
-        />
-        <SliderRow
-          label="Max Position"
-          value={settings.max_position_size}
-          min={10000}
-          max={200000}
-          step={5000}
-          format={v => `$${v.toLocaleString()}`}
-          onChange={v => set('max_position_size', v)}
-        />
+        <SliderRow label="Fund Budget"  value={settings.fund_budget}      min={10000}  max={2000000} step={10000} format={v => `$${v.toLocaleString()}`} onChange={v => set('fund_budget', v)} />
+        <SliderRow label="# Positions"  value={settings.num_positions}    min={1}      max={10}                  format={v => `${v} positions`}           onChange={v => set('num_positions', v)} />
+        <SliderRow label="Min Position" value={settings.min_position_size} min={5000}  max={100000}  step={5000}  format={v => `$${v.toLocaleString()}`} onChange={v => set('min_position_size', v)} />
+        <SliderRow label="Max Position" value={settings.max_position_size} min={10000} max={200000}  step={5000}  format={v => `$${v.toLocaleString()}`} onChange={v => set('max_position_size', v)} />
       </Section>
 
       {/* Screener Filters */}
       <Section title="Screener Filters" emoji="📐">
-        <SliderRow
-          label="Max Delta"
-          value={settings.max_delta}
-          min={0.10}
-          max={0.30}
-          step={0.01}
-          format={v => v.toFixed(2)}
-          onChange={v => set('max_delta', v)}
-        />
-        <SliderRow
-          label="Min Buffer %"
-          value={settings.min_buffer_pct}
-          min={0.03}
-          max={0.20}
-          step={0.01}
-          format={v => `${(v * 100).toFixed(0)}%`}
-          onChange={v => set('min_buffer_pct', v)}
-        />
-        <SliderRow
-          label="Earnings Filter"
-          value={settings.earnings_filter_days}
-          min={0}
-          max={30}
-          format={v => `${v} days`}
-          onChange={v => set('earnings_filter_days', v)}
-        />
+        <SliderRow label="Max Delta"      value={settings.max_delta}            min={0.10} max={0.30} step={0.01} format={v => v.toFixed(2)}                onChange={v => set('max_delta', v)} />
+        <SliderRow label="Min Buffer %"   value={settings.min_buffer_pct}       min={0.03} max={0.20} step={0.01} format={v => `${(v * 100).toFixed(0)}%`} onChange={v => set('min_buffer_pct', v)} />
+        <SliderRow label="Earnings Filter" value={settings.earnings_filter_days} min={0}    max={30}              format={v => `${v} days`}                  onChange={v => set('earnings_filter_days', v)} />
       </Section>
 
       {/* Execution */}
       <Section title="Execution" emoji="⚙️">
-        <Toggle
-          label="Dry Run"
-          sub="Simulate orders — no real trades placed"
-          checked={settings.dry_run}
-          onChange={v => set('dry_run', v)}
-        />
+        <Toggle label="Dry Run" sub="Simulate orders — no real trades placed" checked={settings.dry_run} onChange={v => set('dry_run', v)} />
+      </Section>
+
+      {/* Appearance */}
+      <Section title="Appearance" emoji="🎨">
+        <div>
+          <div className="text-gray-700 dark:text-gray-300 text-sm mb-3">Theme</div>
+          <div className="flex gap-2">
+            {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                onClick={() => setTheme(value)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  theme === value
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
+                <Icon size={14} />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </Section>
 
       {/* Trading Mode — prominent */}
       <div className={`border-2 rounded-xl p-5 space-y-4 ${
-        isLive ? 'border-red-700 bg-red-900/10' : 'border-gray-700 bg-gray-900'
+        isLive ? 'border-red-700 bg-red-900/10' : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900'
       }`}>
-        <div className="text-white font-semibold text-sm flex items-center gap-2">
+        <div className="text-gray-900 dark:text-white font-semibold text-sm flex items-center gap-2">
           <span>🔄</span> Trading Mode
         </div>
 
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-gray-400 text-sm mb-1">Current mode</div>
+            <div className="text-gray-500 text-sm mb-1">Current mode</div>
             <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold border ${
               isLive
                 ? 'bg-red-900/50 text-red-400 border-red-700'
@@ -295,7 +268,7 @@ export default function SettingsPage() {
             }`}>
               {isLive ? '🔴 LIVE TRADING' : '📄 PAPER TRADING'}
             </span>
-            <div className="text-gray-600 text-xs mt-2">
+            <div className="text-gray-500 dark:text-gray-600 text-xs mt-2">
               IBKR port: {settings.ibkr_port} ({isLive ? '4001 = live' : '4002 = paper'})
             </div>
           </div>
@@ -332,7 +305,7 @@ export default function SettingsPage() {
         <button
           onClick={testDiscord}
           disabled={testing}
-          className="flex items-center gap-2 text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 px-3 py-2 rounded-lg transition-colors w-full"
+          className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 px-3 py-2 rounded-lg transition-colors w-full"
         >
           <Send size={13} />
           {testing ? 'Sending...' : 'Send test notification'}
@@ -345,18 +318,18 @@ export default function SettingsPage() {
           className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
           onClick={e => e.target === e.currentTarget && setShowModal(false)}
         >
-          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-md w-full shadow-2xl">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-6 max-w-md w-full shadow-2xl">
 
             {/* ── Switch to Live ── */}
             {!isLive ? (
               <>
                 <div className="flex items-center gap-3 mb-4">
                   <AlertTriangle size={22} className="text-red-400" />
-                  <h3 className="text-lg font-bold text-white">Switch to Live Trading</h3>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">Switch to Live Trading</h3>
                 </div>
 
                 {liveChecking && (
-                  <div className="flex items-center gap-3 text-gray-400 text-sm py-6">
+                  <div className="flex items-center gap-3 text-gray-500 text-sm py-6">
                     <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500 shrink-0" />
                     Checking live credentials…
                   </div>
@@ -380,7 +353,7 @@ export default function SettingsPage() {
                     </div>
                     <button
                       onClick={() => setShowModal(false)}
-                      className="w-full px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium transition-colors"
+                      className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-colors"
                     >
                       Close
                     </button>
@@ -397,8 +370,8 @@ export default function SettingsPage() {
                       </div>
                     </div>
                     <div className="mb-5">
-                      <label className="text-gray-400 text-sm block mb-2">
-                        Type <code className="text-yellow-400 bg-gray-800 px-1 py-0.5 rounded">CONFIRM</code> to proceed:
+                      <label className="text-gray-600 dark:text-gray-400 text-sm block mb-2">
+                        Type <code className="text-yellow-500 dark:text-yellow-400 bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">CONFIRM</code> to proceed:
                       </label>
                       <input
                         autoFocus
@@ -407,13 +380,13 @@ export default function SettingsPage() {
                         onChange={e => setConfirm(e.target.value)}
                         onKeyDown={e => e.key === 'Enter' && confirm === 'CONFIRM' && switchMode()}
                         placeholder="CONFIRM"
-                        className="w-full bg-gray-800 border border-gray-700 text-white px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-blue-600"
+                        className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-white px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-blue-600"
                       />
                     </div>
                     <div className="flex gap-3">
                       <button
                         onClick={() => { setShowModal(false); setConfirm('') }}
-                        className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium transition-colors"
+                        className="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-colors"
                       >
                         Cancel
                       </button>
@@ -433,14 +406,14 @@ export default function SettingsPage() {
               <>
                 <div className="flex items-center gap-3 mb-4">
                   <AlertTriangle size={22} className="text-yellow-400" />
-                  <h3 className="text-lg font-bold text-white">Switch to Paper Trading</h3>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">Switch to Paper Trading</h3>
                 </div>
-                <p className="text-gray-300 text-sm mb-5">
+                <p className="text-gray-600 dark:text-gray-300 text-sm mb-5">
                   This will switch back to IBKR port 4002 (paper gateway). No real trades will be placed.
                 </p>
                 <div className="mb-5">
-                  <label className="text-gray-400 text-sm block mb-2">
-                    Type <code className="text-yellow-400 bg-gray-800 px-1 py-0.5 rounded">CONFIRM</code> to proceed:
+                  <label className="text-gray-600 dark:text-gray-400 text-sm block mb-2">
+                    Type <code className="text-yellow-500 dark:text-yellow-400 bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">CONFIRM</code> to proceed:
                   </label>
                   <input
                     autoFocus
@@ -449,13 +422,13 @@ export default function SettingsPage() {
                     onChange={e => setConfirm(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && confirm === 'CONFIRM' && switchMode()}
                     placeholder="CONFIRM"
-                    className="w-full bg-gray-800 border border-gray-700 text-white px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-blue-600"
+                    className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-white px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-blue-600"
                   />
                 </div>
                 <div className="flex gap-3">
                   <button
                     onClick={() => { setShowModal(false); setConfirm('') }}
-                    className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium transition-colors"
+                    className="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-colors"
                   >
                     Cancel
                   </button>

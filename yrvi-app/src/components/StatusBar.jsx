@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
+import { Sun, Moon, Monitor } from 'lucide-react'
 import axios from 'axios'
+import { useThemeContext } from '../ThemeProvider.jsx'
 
 function Indicator({ ok, label }) {
   return (
     <div className="flex items-center gap-1.5">
       <div className={`w-2 h-2 rounded-full ${ok ? 'bg-green-400' : 'bg-red-500'}`} />
-      <span className={`text-xs ${ok ? 'text-gray-300' : 'text-red-400'}`}>{label}</span>
+      <span className={`text-xs ${ok ? 'text-gray-700 dark:text-gray-300' : 'text-red-400'}`}>{label}</span>
     </div>
   )
 }
@@ -15,8 +17,16 @@ function fmt(n) {
   return '$' + Math.round(n).toLocaleString()
 }
 
+const THEME_CYCLE = { dark: 'light', light: 'system', system: 'dark' }
+const THEME_ICONS = {
+  dark:   <Moon size={14} />,
+  light:  <Sun size={14} />,
+  system: <Monitor size={14} />,
+}
+
 export default function StatusBar() {
   const [status, setStatus] = useState(null)
+  const { theme, setTheme } = useThemeContext()
 
   useEffect(() => {
     const fetch = () => axios.get('/api/status').then(r => setStatus(r.data)).catch(() => {})
@@ -28,7 +38,7 @@ export default function StatusBar() {
   const isLive = status?.trading_mode === 'live'
 
   return (
-    <div className="h-12 bg-gray-900 border-b border-gray-800 flex items-center px-6 gap-6 shrink-0">
+    <div className="h-12 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-6 gap-6 shrink-0">
       {/* Status indicators */}
       <div className="flex items-center gap-4">
         <Indicator ok={status?.gateway_running} label="Gateway" />
@@ -36,14 +46,14 @@ export default function StatusBar() {
         <Indicator ok={status?.ibkr_connected} label="IBKR" />
       </div>
 
-      <div className="w-px h-5 bg-gray-800" />
+      <div className="w-px h-5 bg-gray-200 dark:bg-gray-800" />
 
       {/* Account info */}
       <div className="flex items-center gap-4 text-xs">
         <span className="text-gray-500">Account</span>
-        <span className="text-white font-medium font-mono">{fmt(status?.account_value)}</span>
+        <span className="text-gray-900 dark:text-white font-medium font-mono">{fmt(status?.account_value)}</span>
         <span className="text-gray-500">Buying Power</span>
-        <span className="text-white font-medium font-mono">{fmt(status?.buying_power)}</span>
+        <span className="text-gray-900 dark:text-white font-medium font-mono">{fmt(status?.buying_power)}</span>
       </div>
 
       <div className="flex-1" />
@@ -58,8 +68,17 @@ export default function StatusBar() {
       </span>
 
       {status?.account && (
-        <span className="text-xs text-gray-600">{status.account}</span>
+        <span className="text-xs text-gray-500 dark:text-gray-600">{status.account}</span>
       )}
+
+      {/* Theme toggle */}
+      <button
+        onClick={() => setTheme(THEME_CYCLE[theme])}
+        title={`Theme: ${theme} (click to cycle)`}
+        className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+      >
+        {THEME_ICONS[theme]}
+      </button>
     </div>
   )
 }

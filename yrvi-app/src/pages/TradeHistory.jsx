@@ -42,7 +42,6 @@ function exportCSV(executions, weekStart) {
     OrderType:        ex.order_type ?? '',
     Timestamp:        ex.exec_timestamp ?? '',
   }))
-
   const header = Object.keys(rows[0]).join(',')
   const lines  = rows.map(r => Object.values(r).map(v => `"${v}"`).join(','))
   const csv    = [header, ...lines].join('\n')
@@ -56,9 +55,9 @@ function exportCSV(executions, weekStart) {
 }
 
 export default function TradeHistory() {
-  const [data, setData]     = useState(null)
+  const [data, setData]       = useState(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError]   = useState(null)
+  const [error, setError]     = useState(null)
 
   useEffect(() => {
     axios.get('/api/trade-history')
@@ -94,16 +93,16 @@ export default function TradeHistory() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-white mb-1">Trade History</h1>
+        <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-1">Trade History</h1>
         <div className="text-gray-500 text-sm">Execution details and weekly summaries</div>
       </div>
 
       {/* Current week */}
       {executions.length > 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
             <div>
-              <div className="text-white font-semibold text-sm">
+              <div className="text-gray-900 dark:text-white font-semibold text-sm">
                 Current Week{weekStart && ` — ${fmtDate(weekStart)}`}
               </div>
               {avgSlippage != null && (
@@ -114,7 +113,7 @@ export default function TradeHistory() {
             </div>
             <button
               onClick={() => exportCSV(executions, weekStart)}
-              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 px-3 py-1.5 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 px-3 py-1.5 rounded-lg transition-colors"
             >
               <Download size={12} />
               Export CSV
@@ -123,7 +122,7 @@ export default function TradeHistory() {
 
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-gray-500 text-xs border-b border-gray-800">
+              <tr className="text-gray-500 text-xs border-b border-gray-200 dark:border-gray-800">
                 {['Ticker', 'Status', 'Contracts', 'Strike', 'Fill', 'Screener', 'Slippage', 'Premium', 'Time'].map(h => (
                   <th key={h} className={`${h === 'Ticker' || h === 'Status' ? 'text-left' : 'text-right'} px-4 py-3`}>{h}</th>
                 ))}
@@ -134,25 +133,25 @@ export default function TradeHistory() {
                 const slip = ex.fill_price != null && ex.screener_premium != null
                   ? ex.fill_price - ex.screener_premium : null
                 return (
-                  <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
-                    <td className="px-4 py-3 font-semibold text-white">{ex.ticker}</td>
+                  <tr key={i} className="border-b border-gray-100 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-gray-900 dark:text-white">{ex.ticker}</td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs capitalize ${STATUS_CLASS[ex.status] ?? 'text-gray-400'}`}>
+                      <span className={`text-xs capitalize ${STATUS_CLASS[ex.status] ?? 'text-gray-600 dark:text-gray-400'}`}>
                         {(ex.status ?? '').replace(/_/g, ' ')}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-300">{ex.contracts ?? '—'}</td>
-                    <td className="px-4 py-3 text-right text-gray-300">
+                    <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-300">{ex.contracts ?? '—'}</td>
+                    <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-300">
                       {ex.strike != null ? `$${ex.strike}` : '—'}
                     </td>
-                    <td className="px-4 py-3 text-right text-white">
+                    <td className="px-4 py-3 text-right text-gray-900 dark:text-white">
                       {ex.fill_price != null ? `$${ex.fill_price.toFixed(2)}` : '—'}
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-400">
+                    <td className="px-4 py-3 text-right text-gray-600 dark:text-gray-400">
                       {ex.screener_premium != null ? `$${ex.screener_premium.toFixed(2)}` : '—'}
                     </td>
                     <td className={`px-4 py-3 text-right text-xs ${
-                      slip == null ? 'text-gray-600'
+                      slip == null ? 'text-gray-400 dark:text-gray-600'
                       : slip >= 0 ? 'text-green-400' : 'text-red-400'
                     }`}>
                       {slip != null ? `${slip >= 0 ? '+' : ''}$${slip.toFixed(2)}` : '—'}
@@ -160,7 +159,7 @@ export default function TradeHistory() {
                     <td className="px-4 py-3 text-right text-green-400 font-medium">
                       {ex.premium_collected ? `$${ex.premium_collected.toLocaleString()}` : '—'}
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-600 text-xs">
+                    <td className="px-4 py-3 text-right text-gray-500 dark:text-gray-600 text-xs">
                       {fmtTime(ex.exec_timestamp)}
                     </td>
                   </tr>
@@ -168,11 +167,11 @@ export default function TradeHistory() {
               })}
             </tbody>
             <tfoot>
-              <tr className="border-t border-gray-700">
+              <tr className="border-t border-gray-300 dark:border-gray-700">
                 <td colSpan={7} className="px-4 py-3 text-gray-500 text-xs">
                   {executions.filter(e => e.status === 'filled' || e.status === 'dry_run').length} filled
                 </td>
-                <td className="px-4 py-3 text-right font-bold text-white">
+                <td className="px-4 py-3 text-right font-bold text-gray-900 dark:text-white">
                   ${(pnl.csp_premium ?? 0).toLocaleString()}
                 </td>
                 <td />
@@ -184,14 +183,14 @@ export default function TradeHistory() {
 
       {/* YTD weekly summaries */}
       {weekly_summaries.length > 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-            <div className="text-white font-semibold text-sm">All Weeks</div>
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
+            <div className="text-gray-900 dark:text-white font-semibold text-sm">All Weeks</div>
             <div className="text-gray-500 text-xs">Total: ${total_premium.toLocaleString()}</div>
           </div>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-gray-500 text-xs border-b border-gray-800">
+              <tr className="text-gray-500 text-xs border-b border-gray-200 dark:border-gray-800">
                 <th className="text-left px-5 py-3">Week Of</th>
                 <th className="text-right px-5 py-3">Realized</th>
                 <th className="text-right px-5 py-3">Yield</th>
@@ -199,8 +198,8 @@ export default function TradeHistory() {
             </thead>
             <tbody>
               {[...weekly_summaries].reverse().map((w, i) => (
-                <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
-                  <td className="px-5 py-3 text-gray-300">{fmtDate(w.week_start + 'T00:00:00')}</td>
+                <tr key={i} className="border-b border-gray-100 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
+                  <td className="px-5 py-3 text-gray-700 dark:text-gray-300">{fmtDate(w.week_start + 'T00:00:00')}</td>
                   <td className="px-5 py-3 text-right text-green-400 font-medium">
                     ${(w.realized ?? 0).toLocaleString()}
                   </td>
@@ -219,8 +218,8 @@ export default function TradeHistory() {
       )}
 
       {executions.length === 0 && weekly_summaries.length === 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
-          <div className="text-gray-600">No trade history yet</div>
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-12 text-center">
+          <div className="text-gray-500 dark:text-gray-600">No trade history yet</div>
         </div>
       )}
     </div>
