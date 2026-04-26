@@ -42,6 +42,14 @@ export default function ThisWeek() {
 
   const countdown = useCountdown(status?.next_execution)
 
+  const execLabel = (() => {
+    if (!status?.next_execution) return 'Monday 10:00 AM PST (1:00 PM ET)'
+    const d = new Date(status.next_execution)
+    const pst = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Los_Angeles' })
+    const et  = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' })
+    return `Monday ${pst} PST (${et} ET)`
+  })()
+
   const runScreener = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -71,7 +79,7 @@ export default function ThisWeek() {
           <div>
             <div className="text-gray-500 text-sm mb-1">Next Execution</div>
             <div className="text-3xl font-bold text-gray-900 dark:text-white font-mono">{countdown || '—'}</div>
-            <div className="text-gray-500 dark:text-gray-600 text-sm mt-1">Monday 10:00 AM PST</div>
+            <div className="text-gray-500 dark:text-gray-600 text-sm mt-1">{execLabel}</div>
           </div>
           <div className="flex flex-col items-end gap-3">
             <Clock size={40} className="text-blue-600/30" />

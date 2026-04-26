@@ -67,6 +67,14 @@ export default function Dashboard() {
 
   const countdown = useCountdown(status?.next_execution)
 
+  const execLabel = (() => {
+    if (!status?.next_execution) return 'Monday 10:00 AM PST (1:00 PM ET)'
+    const d = new Date(status.next_execution)
+    const pst = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Los_Angeles' })
+    const et  = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' })
+    return `Monday ${pst} PST (${et} ET)`
+  })()
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -100,7 +108,7 @@ export default function Dashboard() {
             <div>
               <div className="text-gray-500 text-sm mb-1">Next Execution</div>
               <div className="text-4xl font-bold text-gray-900 dark:text-white font-mono tracking-tight">{countdown}</div>
-              <div className="text-gray-500 dark:text-gray-600 text-sm mt-1.5">Monday 10:00 AM PST</div>
+              <div className="text-gray-500 dark:text-gray-600 text-sm mt-1.5">{execLabel}</div>
             </div>
             <Clock size={52} className="text-blue-600/30" />
           </div>

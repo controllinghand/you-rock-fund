@@ -185,12 +185,21 @@ def _gateway_running(port: int) -> bool:
     except Exception:
         return False
 
+def _parse_exec_time(settings: dict) -> tuple:
+    try:
+        h, m = map(int, settings.get("execution_time", "10:00").split(":"))
+        return h, m
+    except Exception:
+        return 10, 0
+
 def _next_execution() -> str:
+    settings = load_settings()
+    exec_h, exec_m = _parse_exec_time(settings)
     now = datetime.now(PST)
     days = (7 - now.weekday()) % 7  # Monday = 0
-    if days == 0 and (now.hour > 10 or (now.hour == 10 and now.minute >= 1)):
+    if days == 0 and (now.hour > exec_h or (now.hour == exec_h and now.minute >= exec_m)):
         days = 7
-    target = (now + timedelta(days=days)).replace(hour=10, minute=0, second=0, microsecond=0)
+    target = (now + timedelta(days=days)).replace(hour=exec_h, minute=exec_m, second=0, microsecond=0)
     return target.isoformat()
 
 # ── Endpoints ─────────────────────────────────────────────────
@@ -210,6 +219,7 @@ def get_status():
         "account":         ibkr["account"],
         "next_execution":  _next_execution(),
         "trading_mode":    settings.get("trading_mode", "paper"),
+        "execution_time":  settings.get("execution_time", "10:00"),
     }
 
 @app.get("/api/positions")
@@ -318,6 +328,7 @@ class SettingsUpdate(BaseModel):
     ibkr_port:                Optional[int]   = None
     discord_webhook_enabled:  Optional[bool]  = None
     trading_mode:             Optional[str]   = None
+    execution_time:           Optional[str]   = None
 
 @app.post("/api/settings")
 def update_settings(body: SettingsUpdate):

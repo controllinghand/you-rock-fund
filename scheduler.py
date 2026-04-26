@@ -17,14 +17,36 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-PST       = ZoneInfo("America/Los_Angeles")
+PST        = ZoneInfo("America/Los_Angeles")
 STATE_FILE = "state.json"
+SETTINGS_FILE = "settings.json"
 
 
 def _new_loop():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     return loop
+
+
+def _load_settings() -> dict:
+    try:
+        with open(SETTINGS_FILE) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def _parse_exec_time(settings: dict) -> tuple:
+    """Return (hour, minute) PST for configured Monday execution time."""
+    try:
+        h, m = map(int, settings.get("execution_time", "10:00").split(":"))
+        return h, m
+    except Exception:
+        return 10, 0
+
+def _offset_time(hour: int, minute: int, delta_minutes: int) -> tuple:
+    """Subtract delta_minutes from (hour, minute), return new (hour, minute)."""
+    total = hour * 60 + minute - delta_minutes
+    return total // 60, total % 60
 
 
 def _load_state() -> dict:
@@ -49,7 +71,8 @@ def run_screener_preview():
 
         targets   = get_top_targets(10)
         positions = size_all(targets)
-        log.info(f"\n📋 {len(positions)} positions queued for Monday 10AM")
+        exec_time = _load_settings().get("execution_time", "10:00")
+        log.info(f"\n📋 {len(positions)} positions queued for Monday {exec_time} PST")
     except Exception as e:
         log.error(f"❌ Preview error: {e}", exc_info=True)
     finally:
@@ -225,6 +248,16 @@ def run_risk_monitor():
 # ── Scheduler main ─────────────────────────────────────────────
 
 def main():
+    settings = _load_settings()
+    exec_h, exec_m = _parse_exec_time(settings)
+    prev_h, prev_m = _offset_time(exec_h, exec_m, 10)   # Discord preview: exec − 10 min
+    wheel_h, wheel_m = _offset_time(exec_h, exec_m, 5)  # Wheel check:     exec − 5 min
+
+    def fmt(h, m):
+        ampm = "AM" if h < 12 else "PM"
+        h12  = h % 12 or 12
+        return f"{h12}:{m:02d} {ampm} PST"
+
     scheduler = BlockingScheduler(timezone=PST)
 
     scheduler.add_job(
@@ -239,17 +272,17 @@ def main():
     )
     scheduler.add_job(
         run_discord_preview,
-        trigger="cron", day_of_week="mon", hour=9, minute=50,
+        trigger="cron", day_of_week="mon", hour=prev_h, minute=prev_m,
         id="monday_discord_preview", name="Monday Discord Preview"
     )
     scheduler.add_job(
         run_wheel_check_job,
-        trigger="cron", day_of_week="mon", hour=9, minute=55,
+        trigger="cron", day_of_week="mon", hour=wheel_h, minute=wheel_m,
         id="monday_wheel_check", name="Monday Wheel Check"
     )
     scheduler.add_job(
         run_pipeline,
-        trigger="cron", day_of_week="mon", hour=10, minute=0,
+        trigger="cron", day_of_week="mon", hour=exec_h, minute=exec_m,
         id="monday_execution", name="Monday CSP Execution"
     )
     scheduler.add_job(
@@ -261,12 +294,12 @@ def main():
     log.info("\n" + "=" * 65)
     log.info("🗓️  YOU ROCK FUND SCHEDULER — Running")
     log.info(f"   Current time : {datetime.now(PST).strftime('%A %Y-%m-%d %H:%M %Z')}")
-    log.info("   • Friday     4:15 PM PST — assignment detection")
-    log.info("   • Saturday   6:00 PM PST — screener preview")
-    log.info("   • Monday     9:50 AM PST — Discord preview (if webhook set)")
-    log.info("   • Monday     9:55 AM PST — wheel check (stop loss + CCs)")
-    log.info("   • Monday    10:00 AM PST — CSP execution")
-    log.info("   • Tue–Thu    9:00 AM PST — daily risk monitor")
+    log.info("   • Friday     4:15 PM PST  — assignment detection")
+    log.info("   • Saturday   6:00 PM PST  — screener preview")
+    log.info(f"   • Monday    {fmt(prev_h, prev_m):>11}  — Discord preview (if webhook set)")
+    log.info(f"   • Monday    {fmt(wheel_h, wheel_m):>11}  — wheel check (stop loss + CCs)")
+    log.info(f"   • Monday    {fmt(exec_h, exec_m):>11}  — CSP execution  ← configured")
+    log.info("   • Tue–Thu    9:00 AM PST  — daily risk monitor")
     log.info("   Press Ctrl+C to stop")
     log.info("=" * 65 + "\n")
 

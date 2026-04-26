@@ -1,7 +1,36 @@
 import { useEffect, useState, useCallback } from 'react'
 import axios from 'axios'
-import { Save, AlertTriangle, CheckCircle, Bell, Send, Sun, Moon, Monitor } from 'lucide-react'
+import { Save, AlertTriangle, CheckCircle, Send, Sun, Moon, Monitor } from 'lucide-react'
 import { useThemeContext } from '../ThemeProvider.jsx'
+
+const PRESET_TIMES = [
+  { value: '06:30', et: '9:30 AM ET',  note: 'Market Open' },
+  { value: '07:00', et: '10:00 AM ET', note: '30 min after open' },
+  { value: '07:30', et: '10:30 AM ET', note: '1 hr after open' },
+  { value: '08:00', et: '11:00 AM ET', note: '' },
+  { value: '09:00', et: '12:00 PM ET', note: 'Noon ET' },
+  { value: '10:00', et: '1:00 PM ET',  note: 'Recommended ★' },
+  { value: '11:00', et: '2:00 PM ET',  note: '' },
+]
+
+function fmtExecTime(val) {
+  if (!val) return ''
+  const [hStr, mStr] = val.split(':')
+  const h = parseInt(hStr, 10)
+  const m = parseInt(mStr, 10)
+  if (isNaN(h) || isNaN(m)) return val
+  const pad = n => String(n).padStart(2, '0')
+  const pst12 = h % 12 || 12
+  const pstAP  = h >= 12 ? 'PM' : 'AM'
+  const etH    = (h + 3) % 24
+  const et12   = etH % 12 || 12
+  const etAP   = etH >= 12 ? 'PM' : 'AM'
+  return `${pst12}:${pad(m)} ${pstAP} PST (${et12}:${pad(m)} ${etAP} ET)`
+}
+
+function isPreset(val) {
+  return PRESET_TIMES.some(p => p.value === val)
+}
 
 function SliderRow({ label, value, min, max, step = 1, format = v => v, onChange }) {
   return (
@@ -224,7 +253,53 @@ export default function SettingsPage() {
 
       {/* Execution */}
       <Section title="Execution" emoji="⚙️">
-        <Toggle label="Dry Run" sub="Simulate orders — no real trades placed" checked={settings.dry_run} onChange={v => set('dry_run', v)} />
+        {/* Monday execution time */}
+        <div>
+          <div className="text-gray-700 dark:text-gray-300 text-sm mb-2">⏰ Monday Execution Time (PST)</div>
+          <select
+            value={isPreset(settings.execution_time) ? settings.execution_time : 'custom'}
+            onChange={e => {
+              if (e.target.value !== 'custom') set('execution_time', e.target.value)
+              // switching to custom: keep current value in the text input below
+            }}
+            className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+          >
+            {PRESET_TIMES.map(({ value, et, note }) => (
+              <option key={value} value={value}>
+                {value} PST ({et}){note ? ` — ${note}` : ''}
+              </option>
+            ))}
+            <option value="custom">Custom (HH:MM PST)</option>
+          </select>
+
+          {!isPreset(settings.execution_time) && (
+            <input
+              type="text"
+              placeholder="HH:MM (24-hr PST, e.g. 09:30)"
+              value={settings.execution_time ?? ''}
+              onChange={e => set('execution_time', e.target.value)}
+              className="mt-2 w-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+            />
+          )}
+
+          {settings.execution_time && (
+            <div className="mt-1.5 text-blue-500 dark:text-blue-400 text-xs font-medium">
+              {fmtExecTime(settings.execution_time)}
+            </div>
+          )}
+
+          <div className="mt-2 text-xs text-gray-500 dark:text-gray-600 leading-relaxed">
+            Earlier = less liquidity and wider spreads.
+            10:00 AM PST (1:00 PM ET) recommended for best fill prices.
+          </div>
+          <div className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+            Requires scheduler restart to take effect.
+          </div>
+        </div>
+
+        <div className="border-t border-gray-200 dark:border-gray-800 pt-3">
+          <Toggle label="Dry Run" sub="Simulate orders — no real trades placed" checked={settings.dry_run} onChange={v => set('dry_run', v)} />
+        </div>
       </Section>
 
       {/* Appearance */}
