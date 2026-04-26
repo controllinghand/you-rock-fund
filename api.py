@@ -1,12 +1,21 @@
 """YRVI Management Dashboard — FastAPI backend."""
+import asyncio
 import json
 import os
 import subprocess
 import time
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
+
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except (ValueError, ImportError):
+    # uvloop doesn't support nest_asyncio; the per-thread loop setup below handles ib_insync instead
+    pass
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -77,17 +86,28 @@ def _get_ibkr_data(settings: dict) -> dict:
     if _ibkr_cache["data"] and (now - _ibkr_cache["ts"]) < IBKR_CACHE_TTL:
         return _ibkr_cache["data"]
 
-    result = {"connected": False, "account_value": None, "buying_power": None, "account": None}
-    try:
-        from ib_insync import IB
-        port = settings.get("ibkr_port", 4002)
-        host = os.environ.get("IBKR_HOST", "127.0.0.1")
-        account_env = os.environ.get("ACCOUNT", "")
+    result = {"connected": False, "account_value": None, "buying_power": None, "account": None,
+              "error": None}
+    port = settings.get("ibkr_port", 4002)
+    host = os.environ.get("IBKR_HOST", "127.0.0.1")
+    account_env = os.environ.get("ACCOUNT", "")
+    print(f"[api] IBKR connect attempt → {host}:{port} clientId={IBKR_API_CLIENT_ID}")
 
-        ib = IB()
+    # FastAPI sync endpoints run in anyio thread-pool workers. In Python 3.12+
+    # those threads have no event loop set, which causes ib_insync's sync API to
+    # raise RuntimeError("no current event loop"). Create one for this thread.
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    from ib_insync import IB
+    ib = IB()
+    try:
         ib.connect(host, port, clientId=IBKR_API_CLIENT_ID, timeout=5, readonly=True)
         accts = ib.managedAccounts()
         acct = account_env or (accts[0] if accts else "")
+        print(f"[api] IBKR connected — accounts: {accts}")
         if acct:
             result["account"] = acct
             for item in ib.accountSummary(acct):
@@ -97,9 +117,17 @@ def _get_ibkr_data(settings: dict) -> dict:
                     elif item.tag == "BuyingPower":
                         result["buying_power"] = round(float(item.value), 2)
             result["connected"] = True
-        ib.disconnect()
+        print(f"[api] IBKR account_value={result['account_value']} buying_power={result['buying_power']}")
     except Exception as e:
-        print(f"[api] IBKR: {e}")
+        msg = f"{type(e).__name__}: {e}"
+        print(f"[api] IBKR connection failed — {msg}")
+        traceback.print_exc()
+        result["error"] = msg
+    finally:
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
 
     _ibkr_cache["data"] = result
     _ibkr_cache["ts"] = now
@@ -140,6 +168,7 @@ def get_status():
         "gateway_running": _gateway_running(port),
         "scheduler_pid":   _scheduler_pid(),
         "ibkr_connected":  ibkr["connected"],
+        "ibkr_error":      ibkr.get("error"),
         "account_value":   ibkr["account_value"],
         "buying_power":    ibkr["buying_power"],
         "account":         ibkr["account"],
