@@ -197,14 +197,18 @@ print(os.environ.get('$KEY', ''))
 done
 [ "$ALL_ENV_OK" = "true" ] && pass ".env — all 6 keys populated"
 
-# DRY_RUN
-DRY=$(grep "^DRY_RUN" trader.py | grep -o "True\|False" | head -1)
+# DRY_RUN (read from settings.json via config.get_settings)
+DRY=$("$PYTHON" -c "
+from config import get_settings
+s = get_settings()
+print(s.get('dry_run', False))
+" 2>/dev/null)
 if [ "$DRY" = "False" ]; then
     pass "DRY_RUN = False  (live orders enabled)"
 elif [ "$DRY" = "True" ]; then
     warn "DRY_RUN = True  — no real orders will be placed"
 else
-    warn "Could not determine DRY_RUN state in trader.py"
+    warn "Could not determine DRY_RUN state (settings.json missing?)"
 fi
 
 # MIN_DAYS_TO_EXPIRY
