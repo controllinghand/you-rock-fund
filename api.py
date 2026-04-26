@@ -120,15 +120,33 @@ def _restart_ibgateway() -> None:
 @app.post("/api/restart-scheduler")
 def restart_scheduler():
     uid = os.getuid()
-    subprocess.run(
-        ["launchctl", "kickstart", "-k", f"gui/{uid}/com.yourockfund.scheduler"],
+    service = "com.yourockfund.scheduler"
+    errors: list[str] = []
+
+    # 1. Try kickstart -k (kills running instance then relaunches)
+    r = subprocess.run(
+        ["launchctl", "kickstart", "-k", f"gui/{uid}/{service}"],
         capture_output=True, text=True, timeout=10,
     )
+    print(f"[api] kickstart stdout: {r.stdout!r}  stderr: {r.stderr!r}  rc={r.returncode}")
+    if r.returncode != 0:
+        errors.append(f"kickstart rc={r.returncode}: {r.stderr.strip() or r.stdout.strip()}")
+
+        # 2. Fallback: stop then start
+        r2 = subprocess.run(["launchctl", "stop", service], capture_output=True, text=True, timeout=10)
+        print(f"[api] stop rc={r2.returncode} stderr={r2.stderr!r}")
+        time.sleep(1)
+        r3 = subprocess.run(["launchctl", "start", service], capture_output=True, text=True, timeout=10)
+        print(f"[api] start rc={r3.returncode} stderr={r3.stderr!r}")
+        if r3.returncode != 0:
+            errors.append(f"stop/start rc={r3.returncode}: {r3.stderr.strip() or r3.stdout.strip()}")
+
     time.sleep(2)
     pid = _scheduler_pid()
     if pid is None:
-        raise HTTPException(status_code=500, detail="Scheduler did not start — check scheduler_log.txt")
-    return {"success": True, "pid": pid}
+        detail = "Scheduler did not start. " + " | ".join(errors) if errors else "Scheduler did not start — check scheduler_log.txt"
+        raise HTTPException(status_code=500, detail=detail)
+    return {"success": True, "pid": pid, "errors": errors}
 
 def _get_ibkr_data(settings: dict) -> dict:
     now = time.time()
