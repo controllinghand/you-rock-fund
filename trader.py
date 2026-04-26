@@ -4,7 +4,7 @@ import math
 from datetime import datetime, timezone
 from ib_insync import IB, Option, LimitOrder, MarketOrder
 
-from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, ACCOUNT, NUM_POSITIONS, TOTAL_FUND_BUDGET
+from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, ACCOUNT, NUM_POSITIONS, TOTAL_FUND_BUDGET, DRY_RUN
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,7 +22,6 @@ MID_WAIT_SECS       = 120
 BID_WAIT_SECS       = 120
 MARKET_WAIT_SECS    = 60    # total polling window for market orders
 MARKET_POLL_SECS    = 5     # check every N seconds
-DRY_RUN             = False
 
 
 def connect() -> IB:

@@ -6,6 +6,8 @@
 
 PROJ=$(cd "$(dirname "$0")" && pwd)
 PYTHON="$PROJ/venv/bin/python3"
+NODE="$(command -v node 2>/dev/null)"
+NPM="$(command -v npm 2>/dev/null)"
 PLIST_SRC="$PROJ/com.yourockfund.scheduler.plist"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.scheduler.plist"
 LABEL="com.yourockfund.scheduler"
@@ -293,4 +295,53 @@ else
     echo ""
     printf "  ${BOLD}${RED}🔴  NO-GO — resolve %d critical issue(s)  (%s)${NC}\n" "$FAIL" "$DAY_CTX"
 fi
+
+# ═════════════════════════════════════════════════════════════
+section "Web Dashboard"
+# ═════════════════════════════════════════════════════════════
+
+# FastAPI backend
+API_PID=$(lsof -ti :8000 2>/dev/null | head -1)
+if [ -n "$API_PID" ]; then
+    pass "FastAPI backend running  (port 8000, PID $API_PID)"
+else
+    warn "FastAPI not running — starting in background..."
+    cd "$PROJ"
+    nohup "$PYTHON" -m uvicorn api:app --host 127.0.0.1 --port 8000 \
+        > "$PROJ/api_stdout.log" 2> "$PROJ/api_stderr.log" &
+    sleep 2
+    API_PID=$(lsof -ti :8000 2>/dev/null | head -1)
+    if [ -n "$API_PID" ]; then
+        pass "FastAPI started  (port 8000, PID $API_PID)"
+    else
+        fail "FastAPI failed to start — check api_stderr.log"
+    fi
+fi
+
+# React frontend
+APP_PID=$(lsof -ti :3000 2>/dev/null | head -1)
+if [ -n "$APP_PID" ]; then
+    pass "React dashboard running  (port 3000, PID $APP_PID)"
+elif [ -n "$NPM" ]; then
+    warn "React app not running — starting in background..."
+    APP_DIR="$PROJ/yrvi-app"
+    if [ -d "$APP_DIR/node_modules" ]; then
+        cd "$APP_DIR"
+        nohup npm start > "$APP_DIR/app_stdout.log" 2> "$APP_DIR/app_stderr.log" &
+        sleep 4
+        APP_PID=$(lsof -ti :3000 2>/dev/null | head -1)
+        if [ -n "$APP_PID" ]; then
+            pass "React app started  (port 3000, PID $APP_PID)"
+        else
+            warn "React app may still be starting — check $APP_DIR/app_stderr.log"
+        fi
+    else
+        warn "node_modules not found — run: cd yrvi-app && npm install"
+    fi
+else
+    warn "npm not found — install Node.js to run the dashboard"
+fi
+
+echo ""
+printf "  ${BOLD}${BLUE}🌐  YRVI Dashboard: http://localhost:3000${NC}\n"
 echo ""
