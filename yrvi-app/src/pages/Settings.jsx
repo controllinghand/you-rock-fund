@@ -64,14 +64,18 @@ function Toggle({ label, sub, checked, onChange }) {
 }
 
 export default function SettingsPage() {
-  const [settings, setSettings]   = useState(null)
-  const [original, setOriginal]   = useState(null)
-  const [saving, setSaving]       = useState(false)
-  const [testing, setTesting]     = useState(false)
-  const [msg, setMsg]             = useState(null)
-  const [showModal, setShowModal] = useState(false)
-  const [confirm, setConfirm]     = useState('')
-  const [switching, setSwitching] = useState(false)
+  const [settings, setSettings]       = useState(null)
+  const [original, setOriginal]       = useState(null)
+  const [saving, setSaving]           = useState(false)
+  const [testing, setTesting]         = useState(false)
+  const [msg, setMsg]                 = useState(null)
+  const [showModal, setShowModal]     = useState(false)
+  const [confirm, setConfirm]         = useState('')
+  const [switching, setSwitching]     = useState(false)
+  const [liveReady, setLiveReady]     = useState(null)
+  const [liveMissing, setLiveMissing] = useState([])
+  const [liveChecking, setLiveChecking] = useState(false)
+  const [accountMasked, setAccountMasked] = useState('')
 
   useEffect(() => {
     axios.get('/api/settings').then(r => {
@@ -112,6 +116,28 @@ export default function SettingsPage() {
       showMsg('error', err.response?.data?.detail ?? err.message)
     } finally {
       setTesting(false)
+    }
+  }
+
+  const openModal = async () => {
+    setShowModal(true)
+    setConfirm('')
+    if (settings.trading_mode !== 'live') {
+      setLiveReady(null)
+      setLiveMissing([])
+      setAccountMasked('')
+      setLiveChecking(true)
+      try {
+        const res = await axios.get('/api/live-ready')
+        setLiveReady(res.data.ready)
+        setLiveMissing(res.data.missing)
+        setAccountMasked(res.data.account_masked)
+      } catch {
+        setLiveReady(false)
+        setLiveMissing(['Error checking live credentials — is the API running?'])
+      } finally {
+        setLiveChecking(false)
+      }
     }
   }
 
@@ -274,7 +300,7 @@ export default function SettingsPage() {
             </div>
           </div>
           <button
-            onClick={() => { setShowModal(true); setConfirm('') }}
+            onClick={openModal}
             className={`px-4 py-2 text-sm font-medium rounded-lg border transition-colors ${
               isLive
                 ? 'border-blue-700 text-blue-400 hover:bg-blue-900/30'
@@ -320,64 +346,129 @@ export default function SettingsPage() {
           onClick={e => e.target === e.currentTarget && setShowModal(false)}
         >
           <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-md w-full shadow-2xl">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertTriangle size={22} className={isLive ? 'text-yellow-400' : 'text-red-400'} />
-              <h3 className="text-lg font-bold text-white">
-                Switch to {isLive ? 'Paper' : 'Live'} Trading
-              </h3>
-            </div>
 
-            {!isLive && (
-              <div className="bg-red-900/20 border border-red-800 rounded-lg p-4 mb-5">
-                <div className="text-red-400 font-medium text-sm mb-1">⚠️ WARNING</div>
-                <div className="text-red-300 text-sm">
-                  This will switch to IBKR port 4001 (live gateway). All subsequent trades
-                  will execute with <strong>REAL MONEY</strong>. Ensure IB Gateway is running
-                  in live mode before confirming.
+            {/* ── Switch to Live ── */}
+            {!isLive ? (
+              <>
+                <div className="flex items-center gap-3 mb-4">
+                  <AlertTriangle size={22} className="text-red-400" />
+                  <h3 className="text-lg font-bold text-white">Switch to Live Trading</h3>
                 </div>
-              </div>
+
+                {liveChecking && (
+                  <div className="flex items-center gap-3 text-gray-400 text-sm py-6">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500 shrink-0" />
+                    Checking live credentials…
+                  </div>
+                )}
+
+                {!liveChecking && liveReady === false && (
+                  <>
+                    <div className="bg-red-900/20 border border-red-800 rounded-lg p-4 mb-5">
+                      <div className="text-red-400 font-medium text-sm mb-2">
+                        ⚠️ Live credentials not configured
+                      </div>
+                      <div className="text-red-300 text-sm mb-3">
+                        Add these to your .env file before switching:
+                      </div>
+                      <ul className="space-y-1 mb-3">
+                        {liveMissing.map(v => (
+                          <li key={v} className="text-red-300 text-sm font-mono">• {v}</li>
+                        ))}
+                      </ul>
+                      <div className="text-red-400 text-xs">Then restart YRVI and try again.</div>
+                    </div>
+                    <button
+                      onClick={() => setShowModal(false)}
+                      className="w-full px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium transition-colors"
+                    >
+                      Close
+                    </button>
+                  </>
+                )}
+
+                {!liveChecking && liveReady === true && (
+                  <>
+                    <div className="bg-red-900/20 border border-red-800 rounded-lg p-4 mb-5">
+                      <div className="text-red-400 font-medium text-sm mb-1">⚠️ Switching to LIVE trading</div>
+                      <div className="text-red-300 text-sm">
+                        Account: <span className="font-mono font-bold">{accountMasked}</span>
+                        <br />Real money will be used!
+                      </div>
+                    </div>
+                    <div className="mb-5">
+                      <label className="text-gray-400 text-sm block mb-2">
+                        Type <code className="text-yellow-400 bg-gray-800 px-1 py-0.5 rounded">CONFIRM</code> to proceed:
+                      </label>
+                      <input
+                        autoFocus
+                        type="text"
+                        value={confirm}
+                        onChange={e => setConfirm(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && confirm === 'CONFIRM' && switchMode()}
+                        placeholder="CONFIRM"
+                        className="w-full bg-gray-800 border border-gray-700 text-white px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-blue-600"
+                      />
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => { setShowModal(false); setConfirm('') }}
+                        className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={switchMode}
+                        disabled={confirm !== 'CONFIRM' || switching}
+                        className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {switching ? 'Switching…' : 'Switch to Live'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              /* ── Switch back to Paper ── */
+              <>
+                <div className="flex items-center gap-3 mb-4">
+                  <AlertTriangle size={22} className="text-yellow-400" />
+                  <h3 className="text-lg font-bold text-white">Switch to Paper Trading</h3>
+                </div>
+                <p className="text-gray-300 text-sm mb-5">
+                  This will switch back to IBKR port 4002 (paper gateway). No real trades will be placed.
+                </p>
+                <div className="mb-5">
+                  <label className="text-gray-400 text-sm block mb-2">
+                    Type <code className="text-yellow-400 bg-gray-800 px-1 py-0.5 rounded">CONFIRM</code> to proceed:
+                  </label>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={confirm}
+                    onChange={e => setConfirm(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && confirm === 'CONFIRM' && switchMode()}
+                    placeholder="CONFIRM"
+                    className="w-full bg-gray-800 border border-gray-700 text-white px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-blue-600"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setShowModal(false); setConfirm('') }}
+                    className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={switchMode}
+                    disabled={confirm !== 'CONFIRM' || switching}
+                    className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {switching ? 'Switching…' : 'Switch to Paper'}
+                  </button>
+                </div>
+              </>
             )}
-
-            {isLive && (
-              <p className="text-gray-300 text-sm mb-5">
-                This will switch back to IBKR port 4002 (paper gateway). No real trades will be placed.
-              </p>
-            )}
-
-            <div className="mb-5">
-              <label className="text-gray-400 text-sm block mb-2">
-                Type <code className="text-yellow-400 bg-gray-800 px-1 py-0.5 rounded">CONFIRM</code> to proceed:
-              </label>
-              <input
-                autoFocus
-                type="text"
-                value={confirm}
-                onChange={e => setConfirm(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && confirm === 'CONFIRM' && switchMode()}
-                placeholder="CONFIRM"
-                className="w-full bg-gray-800 border border-gray-700 text-white px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-blue-600"
-              />
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setShowModal(false); setConfirm('') }}
-                className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={switchMode}
-                disabled={confirm !== 'CONFIRM' || switching}
-                className={`flex-1 px-4 py-2 text-white rounded-lg text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                  isLive
-                    ? 'bg-blue-600 hover:bg-blue-500'
-                    : 'bg-red-600 hover:bg-red-500'
-                }`}
-              >
-                {switching ? 'Switching...' : `Switch to ${isLive ? 'Paper' : 'Live'}`}
-              </button>
-            </div>
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import re
 import subprocess
 import time
 import traceback
@@ -29,6 +30,13 @@ STATE_FILE = BASE_DIR / "state.json"
 YTD_FILE = BASE_DIR / "ytd_tracker.json"
 SETTINGS_FILE = BASE_DIR / "settings.json"
 SETTINGS_DEFAULT_FILE = BASE_DIR / "settings_default.json"
+IBC_CONFIG_FILE = BASE_DIR / "ibc_config.ini"
+
+LIVE_PLACEHOLDERS = {
+    "IBKR_USERNAME_LIVE": "your_live_ibkr_username",
+    "IBKR_PASSWORD_LIVE": "your_live_ibkr_password",
+    "ACCOUNT_LIVE": "your_live_account_number (starts with U)",
+}
 
 PST = ZoneInfo("America/Los_Angeles")
 ANNUAL_TARGET = 100_000
@@ -81,6 +89,34 @@ def load_ytd() -> dict:
 _ibkr_cache: dict = {"data": None, "ts": 0.0}
 IBKR_CACHE_TTL = 30.0
 
+def _live_ready() -> dict:
+    missing = []
+    for var, placeholder in LIVE_PLACEHOLDERS.items():
+        val = os.environ.get(var, "")
+        if not val or val == placeholder:
+            missing.append(var)
+    account_live = os.environ.get("ACCOUNT_LIVE", "")
+    placeholder_account = LIVE_PLACEHOLDERS["ACCOUNT_LIVE"]
+    masked = (account_live[0] + "****") if (account_live and account_live != placeholder_account) else ""
+    return {"ready": len(missing) == 0, "missing": missing, "account_masked": masked}
+
+def _update_ibc_config(username: str, password: str, mode: str, port: int) -> None:
+    if not IBC_CONFIG_FILE.exists():
+        return
+    content = IBC_CONFIG_FILE.read_text()
+    content = re.sub(r'^IbLoginId=.*$', f'IbLoginId={username}', content, flags=re.MULTILINE)
+    content = re.sub(r'^IbPassword=.*$', f'IbPassword={password}', content, flags=re.MULTILINE)
+    content = re.sub(r'^TradingMode=.*$', f'TradingMode={mode}', content, flags=re.MULTILINE)
+    content = re.sub(r'^ForceTwsApiPort=.*$', f'ForceTwsApiPort={port}', content, flags=re.MULTILINE)
+    IBC_CONFIG_FILE.write_text(content)
+
+def _restart_ibgateway() -> None:
+    uid = os.getuid()
+    subprocess.run(
+        ["launchctl", "kickstart", "-k", f"gui/{uid}/com.yourockfund.ibgateway"],
+        capture_output=True, text=True, timeout=10,
+    )
+
 def _get_ibkr_data(settings: dict) -> dict:
     now = time.time()
     if _ibkr_cache["data"] and (now - _ibkr_cache["ts"]) < IBKR_CACHE_TTL:
@@ -90,7 +126,7 @@ def _get_ibkr_data(settings: dict) -> dict:
               "error": None}
     port = settings.get("ibkr_port", 4002)
     host = os.environ.get("IBKR_HOST", "127.0.0.1")
-    account_env = os.environ.get("ACCOUNT", "")
+    account_env = settings.get("account") or os.environ.get("ACCOUNT", "")
     print(f"[api] IBKR connect attempt → {host}:{port} clientId={IBKR_API_CLIENT_ID}")
 
     # FastAPI sync endpoints run in anyio thread-pool workers. In Python 3.12+
@@ -262,6 +298,10 @@ def run_screener():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/live-ready")
+def get_live_ready():
+    return _live_ready()
+
 @app.get("/api/settings")
 def get_settings_endpoint():
     return load_settings()
@@ -298,9 +338,29 @@ def set_trading_mode(body: TradingModeRequest):
     if body.mode not in ("paper", "live"):
         raise HTTPException(status_code=400, detail="mode must be 'paper' or 'live'")
 
+    if body.mode == "live":
+        ready = _live_ready()
+        if not ready["ready"]:
+            missing_str = ", ".join(ready["missing"])
+            raise HTTPException(
+                status_code=400,
+                detail=f"Live credentials not configured. Add these to your .env file and restart YRVI: {missing_str}",
+            )
+
     current = load_settings()
     current["trading_mode"] = body.mode
     current["ibkr_port"]    = 4001 if body.mode == "live" else 4002
+
+    if body.mode == "live":
+        current["account"] = os.environ.get("ACCOUNT_LIVE", "")
+        _update_ibc_config(
+            username=os.environ.get("IBKR_USERNAME_LIVE", ""),
+            password=os.environ.get("IBKR_PASSWORD_LIVE", ""),
+            mode="live",
+            port=4001,
+        )
+        _restart_ibgateway()
+
     save_settings(current)
 
     # Bust cache so next /api/status re-checks IBKR

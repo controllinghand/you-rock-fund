@@ -266,6 +266,65 @@ For manual installation:
 
 ---
 
+---
+
+## Preparing for Live Trading
+
+Once you've run paper trading for at least 4 weeks and are ready to use real money, follow these steps to switch YRVI to live trading via the dashboard.
+
+### Step 1 — Open a Live IBKR Account
+
+If you've only been using a paper trading account, you'll need a funded live account:
+
+1. Log into **https://www.interactivebrokers.com/portal**
+2. Go to **Account → Open Additional Account** (or apply during your original signup)
+3. Deposit funds via ACH (free, 3–5 days) or wire transfer
+4. Confirm you have **Level 2 options approval** on the live account (same as paper)
+
+> Your live account number starts with **`U`** (e.g., `U12345678`). Paper accounts start with `DU`.
+
+### Step 2 — Add Live Credentials to .env
+
+Open your `.env` file and add the live-specific credentials at the bottom:
+
+```env
+IBKR_USERNAME_LIVE=your_live_ibkr_username
+IBKR_PASSWORD_LIVE=your_live_ibkr_password
+ACCOUNT_LIVE=U12345678
+```
+
+These are kept separate from your paper credentials (`IBKR_USERNAME`, `IBKR_PASSWORD`, `ACCOUNT`) so you can switch back and forth safely.
+
+> **Security note:** Your `.env` file is excluded from git (never uploaded to GitHub). Keep it on your local machine only.
+
+### Step 3 — Restart YRVI
+
+After editing `.env`, restart the YRVI API so it picks up the new environment variables:
+
+```bash
+# In the YRVI app, use the restart option
+# Or from terminal:
+launchctl stop com.yourockfund.api
+launchctl start com.yourockfund.api
+```
+
+### Step 4 — Switch to Live in the Dashboard
+
+1. Open the YRVI dashboard → **Settings**
+2. Click **"Switch to Live"**
+3. The dashboard checks that all three live credentials are set
+4. If any are missing, a warning is shown with exactly which variables to add
+5. If all credentials are configured, a confirmation modal shows your account number (masked) — type `CONFIRM` to proceed
+
+When you confirm, YRVI automatically:
+- Updates IB Gateway configuration with your live credentials
+- Restarts IB Gateway pointed at port 4001 (live)
+- Posts a Discord alert (if webhook is enabled)
+
+> You do **not** need to manually edit `ibc_config.ini` or restart IB Gateway — the dashboard handles it.
+
+---
+
 ## Common Issues & Solutions
 
 | Problem | Solution |
