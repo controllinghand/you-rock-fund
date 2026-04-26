@@ -21,10 +21,9 @@ export default function App() {
       <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
         {/* Sidebar */}
         <nav className="w-52 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
-          <div className="px-5 py-4 border-b border-gray-800">
-            <div className="text-blue-400 font-bold text-lg tracking-widest">YRVI</div>
-            <div className="text-gray-600 text-xs mt-0.5">Volatility Income Fund</div>
-          </div>
+          <NavLink to="/" className="px-5 py-4 border-b border-gray-800 flex items-center">
+            <img src="/yrvi_logo.png" alt="YRVI" className="w-[120px]" />
+          </NavLink>
 
           <div className="flex-1 p-2 space-y-0.5 overflow-y-auto">
             {NAV.map(({ path, label, icon: Icon, end }) => (
