@@ -25,7 +25,7 @@ function useCountdown(isoStr) {
 function fmtDate(s) {
   if (!s) return '—'
   try {
-    return new Date(s).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+    return new Date(s).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
   } catch { return s }
 }
 

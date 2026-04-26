@@ -91,7 +91,7 @@ export default function PositionCard({ position: p }) {
       {/* Capital deployed */}
       <div className="mt-3 text-xs text-gray-700">
         ${(p.capital_used ?? 0).toLocaleString()} deployed
-        {p.expiry && ` · exp ${new Date(p.expiry).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+        {p.expiry && ` · exp ${new Date(p.expiry).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}`}
       </div>
     </div>
   )
