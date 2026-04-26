@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>com.yourockfund.dashboard</string>
+
+    <!-- npm run preview serves the pre-built dist/ on port 3000 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NPM__</string>
+        <string>run</string>
+        <string>preview</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJ__/yrvi-app</string>
+
+    <!-- Logs — excluded from git via .gitignore -->
+    <key>StandardOutPath</key>
+    <string>__PROJ__/yrvi-app/preview_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJ__/yrvi-app/preview_stderr.log</string>
+
+    <!-- Auto-start at login and restart after any crash -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Prevent restart storm: wait 10s between restarts -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <!-- Cover both Apple Silicon (/opt/homebrew) and Intel (/usr/local) Homebrew -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+</dict>
+</plist>

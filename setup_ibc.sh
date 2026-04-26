@@ -31,6 +31,12 @@ IBC_ZIP="/tmp/IBCMacos-${IBC_VERSION}.zip"
 PLIST_SRC="$PROJ/com.yourockfund.ibgateway.plist"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.ibgateway.plist"
 GATEWAY_LABEL="com.yourockfund.ibgateway"
+API_PLIST_SRC="$PROJ/com.yourockfund.api.plist"
+API_PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.api.plist"
+API_LABEL="com.yourockfund.api"
+DASH_PLIST_SRC="$PROJ/com.yourockfund.dashboard.plist"
+DASH_PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.dashboard.plist"
+DASH_LABEL="com.yourockfund.dashboard"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
@@ -121,6 +127,23 @@ fi
 info "Installing Python requirements..."
 "$VENV_DIR/bin/pip" install -q -r "$PROJ/requirements.txt"
 ok "Python packages installed"
+
+# React dashboard — install npm packages and build production bundle
+APP_DIR="$PROJ/yrvi-app"
+if [ -d "$APP_DIR" ] && [ -f "$APP_DIR/package.json" ]; then
+    if [ ! -d "$APP_DIR/node_modules" ]; then
+        info "Installing React app dependencies (npm install)..."
+        npm --prefix "$APP_DIR" install --silent
+        ok "npm packages installed"
+    else
+        ok "npm packages already installed"
+    fi
+    info "Building React dashboard for production (npm run build)..."
+    npm --prefix "$APP_DIR" run build --silent
+    ok "React dashboard built → yrvi-app/dist/"
+else
+    warn "yrvi-app/ not found — skipping dashboard build"
+fi
 
 # ── Step 1: Load .env ─────────────────────────────────────────
 echo ""
@@ -365,6 +388,35 @@ else
     info "Logs:  tail -f $IBC_LOG_DIR/ibgateway_stderr.log"
 fi
 
+# Install FastAPI backend plist
+NPM_BIN="$(command -v npm 2>/dev/null)"
+launchctl bootout "gui/$(id -u)/$API_LABEL" 2>/dev/null || true
+sed -e "s|__PROJ__|$PROJ|g" -e "s|__HOME__|$HOME|g" \
+    "$API_PLIST_SRC" > "$API_PLIST_DEST"
+launchctl bootstrap "gui/$(id -u)" "$API_PLIST_DEST" 2>/dev/null || \
+    launchctl load "$API_PLIST_DEST" 2>/dev/null || true
+sleep 2
+API_PID=$(launchctl list "$API_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+[ -n "$API_PID" ] && ok "FastAPI backend launchd service loaded  (PID $API_PID)" || \
+    warn "FastAPI backend registered — will start on next login (or run startup.sh)"
+
+# Install React dashboard plist (requires dist/ from npm run build above)
+if [ -n "$NPM_BIN" ] && [ -d "$PROJ/yrvi-app/dist" ]; then
+    launchctl bootout "gui/$(id -u)/$DASH_LABEL" 2>/dev/null || true
+    sed -e "s|__PROJ__|$PROJ|g" \
+        -e "s|__HOME__|$HOME|g" \
+        -e "s|__NPM__|$NPM_BIN|g" \
+        "$DASH_PLIST_SRC" > "$DASH_PLIST_DEST"
+    launchctl bootstrap "gui/$(id -u)" "$DASH_PLIST_DEST" 2>/dev/null || \
+        launchctl load "$DASH_PLIST_DEST" 2>/dev/null || true
+    sleep 2
+    DASH_PID=$(launchctl list "$DASH_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+    [ -n "$DASH_PID" ] && ok "React dashboard launchd service loaded  (PID $DASH_PID, port 3000)" || \
+        warn "React dashboard registered — will start on next login (or run startup.sh)"
+else
+    warn "Skipping dashboard plist — npm not found or dist/ missing"
+fi
+
 # ── Step 6: Desktop app bundle ────────────────────────────────
 echo ""
 echo "${BOLD}Step 6 / 7   Create YRVI Startup app${NC}"
@@ -433,16 +485,24 @@ echo "════════════════════════�
 printf "${BOLD}${GREEN}  Setup complete.${NC}\n"
 echo "══════════════════════════════════════════════════════"
 echo ""
-echo "  IB Gateway will now auto-start on every login."
+echo "  All services now auto-start on every login:"
+echo "    • IB Gateway   (IBC / launchd)"
+echo "    • Scheduler    (com.yourockfund.scheduler)"
+echo "    • FastAPI API  (com.yourockfund.api  → port 8000)"
+echo "    • Dashboard    (com.yourockfund.dashboard → port 3000)"
 echo ""
-echo "  Monitor:"
-echo "    tail -f $IBC_LOG_DIR/ibgateway_stdout.log"
+echo "  Dashboard:  http://localhost:3000"
+echo ""
+echo "  Monitor logs:"
 echo "    tail -f $IBC_LOG_DIR/ibgateway_stderr.log"
+echo "    tail -f $PROJ/api_stderr.log"
+echo "    tail -f $PROJ/yrvi-app/preview_stderr.log"
 echo ""
-echo "  Test API connection:"
+echo "  Test / restart everything:"
 echo "    Double-click  YRVI Startup  on your Desktop"
 echo "    — or —  bash startup.sh"
 echo ""
-echo "  Manual restart:"
-echo "    launchctl kickstart -k gui/\$(id -u)/$GATEWAY_LABEL"
+echo "  Manual service restart:"
+echo "    launchctl kickstart -k gui/\$(id -u)/com.yourockfund.api"
+echo "    launchctl kickstart -k gui/\$(id -u)/com.yourockfund.dashboard"
 echo ""

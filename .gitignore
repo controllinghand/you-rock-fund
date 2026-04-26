@@ -20,3 +20,5 @@ yrvi-app/node_modules/
 yrvi-app/dist/
 yrvi-app/app_stdout.log
 yrvi-app/app_stderr.log
+yrvi-app/preview_stdout.log
+yrvi-app/preview_stderr.log

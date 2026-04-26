@@ -16,6 +16,10 @@ IBC_LOG="$HOME/IBC/Logs/ibgateway_stderr.log"
 API_PLIST_SRC="$PROJ/com.yourockfund.api.plist"
 API_PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.api.plist"
 API_LABEL="com.yourockfund.api"
+DASH_PLIST_SRC="$PROJ/com.yourockfund.dashboard.plist"
+DASH_PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.dashboard.plist"
+DASH_LABEL="com.yourockfund.dashboard"
+NPM_BIN="$(command -v npm 2>/dev/null)"
 
 # ANSI colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -353,28 +357,63 @@ else
     fi
 fi
 
-# React frontend (npm start — not daemonized via launchd, start on demand)
-APP_PID=$(lsof -ti :3000 2>/dev/null | head -1)
-if [ -n "$APP_PID" ]; then
-    pass "React dashboard running  (port 3000, PID $APP_PID)"
-elif [ -n "$NPM" ]; then
-    APP_DIR="$PROJ/yrvi-app"
-    if [ -d "$APP_DIR/node_modules" ]; then
-        warn "React app not running — starting in background..."
-        cd "$APP_DIR"
-        nohup npm start > "$APP_DIR/app_stdout.log" 2> "$APP_DIR/app_stderr.log" &
-        sleep 4
-        APP_PID=$(lsof -ti :3000 2>/dev/null | head -1)
-        if [ -n "$APP_PID" ]; then
-            pass "React app started  (port 3000, PID $APP_PID)"
+# React dashboard (vite preview — serves pre-built dist/ via launchd)
+APP_DIR="$PROJ/yrvi-app"
+
+# Kill any stale nohup npm start process that predates launchd management
+OLD_NOHUP_DASH=$(pgrep -f "npm.*start|vite.*port 3000|vite.*preview" 2>/dev/null | \
+    while read pid; do
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        [ "$ppid" = "1" ] || echo "$pid"
+    done)
+if [ -n "$OLD_NOHUP_DASH" ]; then
+    warn "Found non-launchd dashboard process(es): $OLD_NOHUP_DASH — stopping them..."
+    echo "$OLD_NOHUP_DASH" | xargs kill 2>/dev/null || true
+    sleep 1
+fi
+
+if [ -z "$NPM_BIN" ]; then
+    warn "npm not found — install Node.js to enable the dashboard"
+elif [ ! -d "$APP_DIR/dist" ]; then
+    warn "yrvi-app/dist not found — run:  cd yrvi-app && npm run build"
+    warn "Dashboard will not start until the app is built"
+else
+    # Install plist if not already in LaunchAgents
+    if [ ! -f "$DASH_PLIST_DEST" ]; then
+        warn "Dashboard plist not in LaunchAgents — installing..."
+        sed -e "s|__PROJ__|$PROJ|g" \
+            -e "s|__HOME__|$HOME|g" \
+            -e "s|__NPM__|$NPM_BIN|g" \
+            "$DASH_PLIST_SRC" > "$DASH_PLIST_DEST"
+    fi
+
+    DASH_PID=$(launchctl list "$DASH_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+
+    if [ -n "$DASH_PID" ]; then
+        pass "React dashboard running via launchd  (PID $DASH_PID, port 3000)"
+    elif launchctl list "$DASH_LABEL" > /dev/null 2>&1; then
+        warn "Dashboard service registered but not running — restarting..."
+        launchctl kickstart -k "gui/$(id -u)/$DASH_LABEL" > /dev/null 2>&1 || true
+        sleep 3
+        DASH_PID=$(launchctl list "$DASH_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+        if [ -n "$DASH_PID" ]; then
+            pass "React dashboard restarted  (PID $DASH_PID)"
         else
-            warn "React app may still be compiling — check $APP_DIR/app_stderr.log"
+            fail "React dashboard failed to restart — check $APP_DIR/preview_stderr.log"
         fi
     else
-        warn "node_modules not found — run: cd yrvi-app && npm install"
+        warn "Dashboard service not loaded — bootstrapping via launchd..."
+        launchctl bootstrap "gui/$(id -u)" "$DASH_PLIST_DEST" 2>/dev/null || \
+            launchctl load "$DASH_PLIST_DEST" 2>/dev/null
+        sleep 3
+        DASH_PID=$(launchctl list "$DASH_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+        if [ -n "$DASH_PID" ]; then
+            pass "React dashboard bootstrapped  (PID $DASH_PID)"
+        else
+            fail "Could not bootstrap dashboard — manual fix:"
+            fail "  launchctl bootstrap gui/\$(id -u) $DASH_PLIST_DEST"
+        fi
     fi
-else
-    warn "npm not found — install Node.js to run the dashboard"
 fi
 
 echo ""
