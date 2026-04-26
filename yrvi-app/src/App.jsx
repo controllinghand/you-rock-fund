@@ -22,7 +22,7 @@ export default function App() {
         {/* Sidebar */}
         <nav className="w-52 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
           <NavLink to="/" className="px-5 py-4 border-b border-gray-800 flex items-center">
-            <img src="/yrvi_logo.png" alt="YRVI" className="w-[120px]" />
+            <img src="/yrvi_logo.png" alt="YRVI" className="w-[60px]" />
           </NavLink>
 
           <div className="flex-1 p-2 space-y-0.5 overflow-y-auto">
