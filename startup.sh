@@ -13,6 +13,9 @@ PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.scheduler.plist"
 LABEL="com.yourockfund.scheduler"
 GW_LABEL="com.yourockfund.ibgateway"
 IBC_LOG="$HOME/IBC/Logs/ibgateway_stderr.log"
+API_PLIST_SRC="$PROJ/com.yourockfund.api.plist"
+API_PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.api.plist"
+API_LABEL="com.yourockfund.api"
 
 # ANSI colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -301,35 +304,63 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════
-section "Web Dashboard"
+section "5 / 5   YRVI Dashboard API  (launchd)"
 # ═════════════════════════════════════════════════════════════
 
-# FastAPI backend
-API_PID=$(lsof -ti :8000 2>/dev/null | head -1)
+# Kill any stale nohup API process that predates launchd management
+OLD_NOHUP_API=$(pgrep -f "python.*uvicorn.*api:app" 2>/dev/null | \
+    while read pid; do
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        [ "$ppid" = "1" ] || echo "$pid"
+    done)
+if [ -n "$OLD_NOHUP_API" ]; then
+    warn "Found non-launchd API process(es): $OLD_NOHUP_API — stopping them..."
+    echo "$OLD_NOHUP_API" | xargs kill 2>/dev/null || true
+    sleep 1
+fi
+
+# Ensure plist is installed in LaunchAgents
+if [ ! -f "$API_PLIST_DEST" ]; then
+    warn "API plist not in LaunchAgents — installing..."
+    sed -e "s|__PROJ__|$PROJ|g" -e "s|__HOME__|$HOME|g" "$API_PLIST_SRC" > "$API_PLIST_DEST"
+fi
+
+API_PID=$(launchctl list "$API_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+
 if [ -n "$API_PID" ]; then
-    pass "FastAPI backend running  (port 8000, PID $API_PID)"
-else
-    warn "FastAPI not running — starting in background..."
-    cd "$PROJ"
-    nohup "$PYTHON" -m uvicorn api:app --host 127.0.0.1 --port 8000 \
-        > "$PROJ/api_stdout.log" 2> "$PROJ/api_stderr.log" &
-    sleep 2
-    API_PID=$(lsof -ti :8000 2>/dev/null | head -1)
+    pass "Dashboard API running via launchd  (PID $API_PID, port 8000)"
+elif launchctl list "$API_LABEL" > /dev/null 2>&1; then
+    warn "API service registered but not running — restarting..."
+    launchctl kickstart -k "gui/$(id -u)/$API_LABEL" > /dev/null 2>&1 || true
+    sleep 3
+    API_PID=$(launchctl list "$API_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
     if [ -n "$API_PID" ]; then
-        pass "FastAPI started  (port 8000, PID $API_PID)"
+        pass "Dashboard API restarted  (PID $API_PID)"
     else
-        fail "FastAPI failed to start — check api_stderr.log"
+        fail "Dashboard API failed to restart — check api_stderr.log"
+    fi
+else
+    warn "API service not loaded — bootstrapping via launchd..."
+    launchctl bootstrap "gui/$(id -u)" "$API_PLIST_DEST" 2>/dev/null || \
+        launchctl load "$API_PLIST_DEST" 2>/dev/null
+    sleep 3
+    API_PID=$(launchctl list "$API_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+    if [ -n "$API_PID" ]; then
+        pass "Dashboard API bootstrapped  (PID $API_PID)"
+    else
+        fail "Could not bootstrap API — manual fix:"
+        fail "  launchctl bootstrap gui/\$(id -u) $API_PLIST_DEST"
     fi
 fi
 
-# React frontend
+# React frontend (npm start — not daemonized via launchd, start on demand)
 APP_PID=$(lsof -ti :3000 2>/dev/null | head -1)
 if [ -n "$APP_PID" ]; then
     pass "React dashboard running  (port 3000, PID $APP_PID)"
 elif [ -n "$NPM" ]; then
-    warn "React app not running — starting in background..."
     APP_DIR="$PROJ/yrvi-app"
     if [ -d "$APP_DIR/node_modules" ]; then
+        warn "React app not running — starting in background..."
         cd "$APP_DIR"
         nohup npm start > "$APP_DIR/app_stdout.log" 2> "$APP_DIR/app_stderr.log" &
         sleep 4
@@ -337,7 +368,7 @@ elif [ -n "$NPM" ]; then
         if [ -n "$APP_PID" ]; then
             pass "React app started  (port 3000, PID $APP_PID)"
         else
-            warn "React app may still be starting — check $APP_DIR/app_stderr.log"
+            warn "React app may still be compiling — check $APP_DIR/app_stderr.log"
         fi
     else
         warn "node_modules not found — run: cd yrvi-app && npm install"

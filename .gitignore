@@ -14,5 +14,9 @@ state.json
 ytd_tracker.json
 earnings_cache.json
 settings.json
+api_stdout.log
+api_stderr.log
 yrvi-app/node_modules/
 yrvi-app/dist/
+yrvi-app/app_stdout.log
+yrvi-app/app_stderr.log

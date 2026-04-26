@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>com.yourockfund.api</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PROJ__/venv/bin/python3</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>api:app</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8000</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJ__</string>
+
+    <!-- Logs — excluded from git via .gitignore -->
+    <key>StandardOutPath</key>
+    <string>__PROJ__/api_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJ__/api_stderr.log</string>
+
+    <!-- Auto-start at login and restart after any crash -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Prevent restart storm: wait 10s between restarts -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>__PROJ__/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+</dict>
+</plist>
