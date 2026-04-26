@@ -245,14 +245,14 @@ def run_screener():
         budget = settings.get("fund_budget", 250_000)
 
         targets = get_top_targets(n * 2)
-        positions = size_all(targets[:n], budget=budget)
+        positions = size_all(targets, budget=budget)  # pass all candidates so sizer can skip and fall through
 
         total_premium = sum(p.get("premium_total", 0) for p in positions)
         total_capital = sum(p.get("capital_used", 0) for p in positions)
 
         return {
             "positions":     positions,
-            "raw_targets":   targets[:n],
+            "raw_targets":   targets,
             "total_premium": total_premium,
             "total_capital": total_capital,
             "blended_yield": round(total_premium / total_capital * 100 if total_capital else 0, 3),
