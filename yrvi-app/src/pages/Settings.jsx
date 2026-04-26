@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import axios from 'axios'
-import { Save, AlertTriangle, CheckCircle, Send, Sun, Moon, Monitor } from 'lucide-react'
+import { Save, AlertTriangle, CheckCircle, Send, Sun, Moon, Monitor, RefreshCw } from 'lucide-react'
 import { useThemeContext } from '../ThemeProvider.jsx'
 
 const PRESET_TIMES = [
@@ -112,6 +112,8 @@ export default function SettingsPage() {
   const [liveMissing, setLiveMissing]     = useState([])
   const [liveChecking, setLiveChecking]   = useState(false)
   const [accountMasked, setAccountMasked] = useState('')
+  const [restarting, setRestarting]       = useState(false)
+  const [restartResult, setRestartResult] = useState(null)
 
   const { theme, setTheme } = useThemeContext()
 
@@ -154,6 +156,19 @@ export default function SettingsPage() {
       showMsg('error', err.response?.data?.detail ?? err.message)
     } finally {
       setTesting(false)
+    }
+  }
+
+  const restartScheduler = async () => {
+    setRestarting(true)
+    setRestartResult(null)
+    try {
+      const res = await axios.post('/api/restart-scheduler')
+      setRestartResult({ ok: true, text: `Scheduler restarted (PID ${res.data.pid})` })
+    } catch (err) {
+      setRestartResult({ ok: false, text: err.response?.data?.detail ?? 'Restart failed — check logs' })
+    } finally {
+      setRestarting(false)
     }
   }
 
@@ -292,9 +307,26 @@ export default function SettingsPage() {
             Earlier = less liquidity and wider spreads.
             10:00 AM PST (1:00 PM ET) recommended for best fill prices.
           </div>
-          <div className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-            Requires scheduler restart to take effect.
-          </div>
+          {settings.execution_time !== original?.execution_time && (
+            <div className="mt-2 flex items-center gap-3 flex-wrap">
+              <span className="text-xs text-amber-600 dark:text-amber-500">
+                ⚠ Save + restart scheduler for new time to take effect.
+              </span>
+              <button
+                onClick={restartScheduler}
+                disabled={restarting}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-amber-600 text-amber-600 dark:text-amber-500 dark:border-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-60 disabled:cursor-wait transition-colors"
+              >
+                <RefreshCw size={11} className={restarting ? 'animate-spin' : ''} />
+                {restarting ? 'Restarting…' : 'Restart Scheduler'}
+              </button>
+            </div>
+          )}
+          {restartResult && (
+            <div className={`mt-1.5 text-xs font-medium ${restartResult.ok ? 'text-green-500' : 'text-red-400'}`}>
+              {restartResult.ok ? '✅' : '❌'} {restartResult.text}
+            </div>
+          )}
         </div>
 
         <div className="border-t border-gray-200 dark:border-gray-800 pt-3">

@@ -117,6 +117,19 @@ def _restart_ibgateway() -> None:
         capture_output=True, text=True, timeout=10,
     )
 
+@app.post("/api/restart-scheduler")
+def restart_scheduler():
+    uid = os.getuid()
+    subprocess.run(
+        ["launchctl", "kickstart", "-k", f"gui/{uid}/com.yourockfund.scheduler"],
+        capture_output=True, text=True, timeout=10,
+    )
+    time.sleep(2)
+    pid = _scheduler_pid()
+    if pid is None:
+        raise HTTPException(status_code=500, detail="Scheduler did not start — check scheduler_log.txt")
+    return {"success": True, "pid": pid}
+
 def _get_ibkr_data(settings: dict) -> dict:
     now = time.time()
     if _ibkr_cache["data"] and (now - _ibkr_cache["ts"]) < IBKR_CACHE_TTL:

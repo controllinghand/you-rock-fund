@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Sun, Moon, Monitor } from 'lucide-react'
 import axios from 'axios'
 import { useThemeContext } from '../ThemeProvider.jsx'
@@ -26,10 +26,20 @@ const THEME_ICONS = {
 
 export default function StatusBar() {
   const [status, setStatus] = useState(null)
+  const [pidFlash, setPidFlash] = useState(false)
+  const prevPid = useRef(null)
   const { theme, setTheme } = useThemeContext()
 
   useEffect(() => {
-    const fetch = () => axios.get('/api/status').then(r => setStatus(r.data)).catch(() => {})
+    const fetch = () => axios.get('/api/status').then(r => {
+      setStatus(r.data)
+      const newPid = r.data?.scheduler_pid
+      if (prevPid.current != null && newPid != null && newPid !== prevPid.current) {
+        setPidFlash(true)
+        setTimeout(() => setPidFlash(false), 2000)
+      }
+      prevPid.current = newPid
+    }).catch(() => {})
     fetch()
     const t = setInterval(fetch, 30000)
     return () => clearInterval(t)
@@ -42,7 +52,16 @@ export default function StatusBar() {
       {/* Status indicators */}
       <div className="flex items-center gap-4">
         <Indicator ok={status?.gateway_running} label="Gateway" />
-        <Indicator ok={status?.scheduler_pid != null} label="Scheduler" />
+        <div className="flex items-center gap-1.5">
+          <div className={`w-2 h-2 rounded-full transition-colors duration-500 ${
+            pidFlash ? 'bg-green-300 shadow-[0_0_6px_2px_rgba(74,222,128,0.6)]' :
+            status?.scheduler_pid != null ? 'bg-green-400' : 'bg-red-500'
+          }`} />
+          <span className={`text-xs transition-colors duration-500 ${
+            pidFlash ? 'text-green-400 font-semibold' :
+            status?.scheduler_pid != null ? 'text-gray-700 dark:text-gray-300' : 'text-red-400'
+          }`}>Scheduler</span>
+        </div>
         <Indicator ok={status?.ibkr_connected} label="IBKR" />
       </div>
 
