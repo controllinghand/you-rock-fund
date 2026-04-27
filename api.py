@@ -206,7 +206,7 @@ def _get_ibkr_data(settings: dict) -> dict:
     from ib_insync import IB
     ib = IB()
     try:
-        ib.connect(host, port, clientId=IBKR_API_CLIENT_ID, timeout=5, readonly=True)
+        ib.connect(host, port, clientId=IBKR_API_CLIENT_ID, timeout=5, readonly=False)
         accts = ib.managedAccounts()
         acct = account_env or (accts[0] if accts else "")
         print(f"[api] IBKR connected — accounts: {accts}")
