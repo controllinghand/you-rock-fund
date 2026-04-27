@@ -73,18 +73,18 @@ if [ -n "$GATEWAY_APP" ]; then
     fi
     echo "  Version : $GW_VER"
 
-    # Binary architecture
-    GW_BIN="$GATEWAY_APP/Contents/MacOS/ibgateway"
-    if [ -f "$GW_BIN" ]; then
+    # Binary architecture — IB Gateway wraps Java via JavaApplicationStub
+    GW_BIN=$(find "$GATEWAY_APP/Contents/MacOS" -maxdepth 1 -type f 2>/dev/null | head -1)
+    if [ -n "$GW_BIN" ]; then
         GW_ARCH=$(file "$GW_BIN" | grep -oE 'arm64|x86_64' | head -1)
-        echo "  Binary  : $GW_ARCH"
+        echo "  Binary  : $(basename "$GW_BIN") ($GW_ARCH)"
         if [ "$ARCH" = "arm64" ] && [ "$GW_ARCH" = "x86_64" ]; then
             warn "x86_64 binary on Apple Silicon — runs via Rosetta 2 (may cause issues)"
         else
             ok "Binary architecture matches system ($GW_ARCH)"
         fi
     else
-        fail "ibgateway binary not found at $GW_BIN"
+        fail "No binary found in $GATEWAY_APP/Contents/MacOS/"
     fi
 else
     fail "IB Gateway not found in ~/Applications, /Applications, or ~/Jts/ibgateway"
@@ -101,10 +101,12 @@ else
     fail "~/IBC directory does not exist — run setup_ibc.sh"
 fi
 
-if [ -f "$IBC_DIR/IBC.sh" ]; then
+if [ -f "$IBC_DIR/IBC.jar" ]; then
+    ok "IBC.jar present"
+elif [ -f "$IBC_DIR/IBC.sh" ]; then
     ok "IBC.sh present"
 else
-    fail "IBC.sh not found in ~/IBC"
+    fail "IBC.jar not found in ~/IBC — run setup_ibc.sh"
 fi
 
 if [ -f "$IBC_DIR/gatewaystartmacos.sh" ]; then
@@ -114,15 +116,30 @@ else
 fi
 
 echo ""
-echo "  IBC script permissions:"
+echo "  IBC script permissions (~/IBC/*.sh):"
 ls -la "$IBC_DIR"/*.sh 2>/dev/null | sed 's/^/    /' || echo "    (no .sh files found)"
 
-# Check executability
+# Check executability of root-level .sh scripts
 NON_EXEC=$(find "$IBC_DIR" -maxdepth 1 -name "*.sh" ! -perm -u+x 2>/dev/null)
 if [ -z "$NON_EXEC" ] && ls "$IBC_DIR"/*.sh &>/dev/null; then
-    ok "All IBC .sh scripts are executable"
+    ok "All ~/IBC/*.sh scripts are executable"
 else
-    [ -n "$NON_EXEC" ] && fail "Non-executable scripts found:$(echo "$NON_EXEC" | sed 's/^/ /')"
+    [ -n "$NON_EXEC" ] && fail "Non-executable scripts in ~/IBC/:$(echo "$NON_EXEC" | sed 's/^/ /')"
+fi
+
+# Check executability of scripts/ subdirectory
+if [ -d "$IBC_DIR/scripts" ]; then
+    echo ""
+    echo "  IBC script permissions (~/IBC/scripts/):"
+    ls -la "$IBC_DIR/scripts/" 2>/dev/null | sed 's/^/    /'
+    NON_EXEC_SUB=$(find "$IBC_DIR/scripts" -maxdepth 1 -type f ! -perm -u+x 2>/dev/null)
+    if [ -z "$NON_EXEC_SUB" ]; then
+        ok "All ~/IBC/scripts/* files are executable"
+    else
+        fail "Non-executable files in ~/IBC/scripts/:$(echo "$NON_EXEC_SUB" | sed 's/^/ /')"
+    fi
+else
+    warn "~/IBC/scripts/ directory not found"
 fi
 
 if [ -f "$IBC_DIR/config.ini" ]; then

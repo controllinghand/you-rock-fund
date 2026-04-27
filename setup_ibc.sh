@@ -318,6 +318,7 @@ mkdir -p "$IBC_LOG_DIR"
 
 # Always ensure all IBC scripts are executable (catches pre-existing installs)
 chmod +x "$IBC_DIR"/*.sh 2>/dev/null || true
+chmod +x "$IBC_DIR"/scripts/* 2>/dev/null || true
 ok "IBC scripts chmod +x"
 
 # ── Step 4: Generate config.ini ───────────────────────────────
