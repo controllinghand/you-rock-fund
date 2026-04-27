@@ -1,5 +1,6 @@
 """YRVI Management Dashboard — FastAPI backend."""
 import asyncio
+import concurrent.futures
 import json
 import os
 import random
@@ -173,114 +174,122 @@ def restart_scheduler():
         raise HTTPException(status_code=500, detail=detail)
     return {"success": True, "pid": pid, "errors": errors}
 
+_IBKR_EMPTY: dict = {
+    "connected": False, "account_value": None, "buying_power": None,
+    "settled_cash": None, "unrealized_pnl": None, "realized_pnl": None,
+    "maintenance_margin": None, "excess_liquidity": None,
+    "account": None, "account_summary": None, "portfolio": [], "error": None,
+}
+
 def _get_ibkr_data(settings: dict) -> dict:
     now = time.time()
     if _ibkr_cache["data"] and (now - _ibkr_cache["ts"]) < IBKR_CACHE_TTL:
         return _ibkr_cache["data"]
 
-    result = {
-        "connected":          False,
-        "account_value":      None,   # NetLiquidation
-        "buying_power":       None,
-        "settled_cash":       None,
-        "unrealized_pnl":     None,
-        "realized_pnl":       None,
-        "maintenance_margin": None,
-        "excess_liquidity":   None,
-        "account":            None,
-        "portfolio":          [],
-        "error":              None,
-    }
-    port = settings.get("ibkr_port", 4002)
-    host = os.environ.get("IBKR_HOST", "127.0.0.1")
+    port        = settings.get("ibkr_port", 4002)
+    host        = os.environ.get("IBKR_HOST", "127.0.0.1")
     account_env = settings.get("account") or os.environ.get("ACCOUNT", "")
 
-    # FastAPI sync endpoints run in anyio thread-pool workers. In Python 3.12+
-    # those threads have no event loop set, which causes ib_insync's sync API to
-    # raise RuntimeError("no current event loop"). Create one for this thread.
-    try:
-        asyncio.get_event_loop()
-    except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
+    def _inner() -> dict:
+        result = dict(_IBKR_EMPTY)
 
-    client_id = random.randint(100, 999)
-    print(f"[api] IBKR connect attempt → {host}:{port} clientId={client_id}")
-    from ib_insync import IB
-    ib = IB()
-    try:
-        ib.connect(host, port, clientId=client_id, timeout=10, readonly=False)
-        accts = ib.managedAccounts()
-        acct = account_env or (accts[0] if accts else "")
-        print(f"[api] IBKR connected — accounts: {accts}")
-        if acct:
-            result["account"] = acct
-
-            # ── Account summary (save before portfolio — don't let portfolio errors kill it)
-            summary_dict = {item.tag: item.value for item in ib.accountSummary(acct)}
-            print(f"[api] accountSummary tags: {list(summary_dict.keys())}")
-            result["account_value"]      = _safe_float(summary_dict.get("NetLiquidation",  0))
-            result["buying_power"]       = _safe_float(summary_dict.get("BuyingPower",     0))
-            result["settled_cash"]       = _safe_float(summary_dict.get("TotalCashValue",  0))
-            result["unrealized_pnl"]     = _safe_float(summary_dict.get("UnrealizedPnL",   0))
-            result["realized_pnl"]       = _safe_float(summary_dict.get("RealizedPnL",     0))
-            result["maintenance_margin"] = _safe_float(summary_dict.get("MaintMarginReq",  0))
-            result["excess_liquidity"]   = _safe_float(summary_dict.get("AvailableFunds",  0))
-            result["account_summary"] = {
-                "net_liquidation":    result["account_value"],
-                "settled_cash":       result["settled_cash"],
-                "unrealized_pnl":     result["unrealized_pnl"],
-                "realized_pnl":       result["realized_pnl"],
-                "maintenance_margin": result["maintenance_margin"],
-                "excess_liquidity":   result["excess_liquidity"],
-                "buying_power":       result["buying_power"],
-            }
-            result["connected"] = True   # account data good — mark connected now
-
-            # ── Portfolio items (separate try — failure preserves account_summary above)
-            try:
-                ib.reqAccountUpdates(True)
-                ib.sleep(3)   # allow updatePortfolio events to populate the cache
-                raw_portfolio = ib.portfolio()
-
-                portfolio = []
-                for item in raw_portfolio:
-                    c = item.contract
-                    is_opt = c.secType == "OPT"
-                    portfolio.append({
-                        "symbol":        c.symbol,
-                        "secType":       c.secType,
-                        "right":         c.right if is_opt else None,
-                        "strike":        _safe_float(c.strike, 4) if is_opt else None,
-                        "expiry":        c.lastTradeDateOrContractMonth if is_opt else None,
-                        "position":      _safe_float(item.position, 0),
-                        "avgCost":       _safe_float(item.averageCost, 4),
-                        "marketPrice":   _safe_float(item.marketPrice, 4),
-                        "marketValue":   _safe_float(item.marketValue, 2),
-                        "unrealizedPNL": _safe_float(item.unrealizedPNL, 2),
-                        "realizedPNL":   _safe_float(item.realizedPNL, 2),
-                    })
-
-                portfolio.sort(key=lambda x: (0 if x["secType"] == "STK" else 1, x["symbol"]))
-                result["portfolio"] = portfolio
-            except Exception as pe:
-                print(f"[api] Portfolio fetch failed (account_summary preserved): {pe}")
-
-        print(f"[api] IBKR net_liq={result['account_value']} "
-              f"unrealized_pnl={result['unrealized_pnl']} "
-              f"portfolio_items={len(result['portfolio'])}")
-    except Exception as e:
-        msg = f"{type(e).__name__}: {e}"
-        print(f"[api] IBKR connection failed — {msg}")
-        traceback.print_exc()
-        result["error"] = msg
-    finally:
+        # ib_insync's sync API requires an event loop on the calling thread.
         try:
-            ib.disconnect()
-        except Exception:
-            pass
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
+        client_id = random.randint(100, 999)
+        print(f"[api] IBKR connect → {host}:{port} clientId={client_id}")
+        from ib_insync import IB
+        ib = IB()
+        try:
+            ib.connect(host, port, clientId=client_id, timeout=10, readonly=False)
+            accts = ib.managedAccounts()
+            acct  = account_env or (accts[0] if accts else "")
+            print(f"[api] IBKR connected — accounts: {accts}")
+            if acct:
+                result["account"] = acct
+
+                # ── Account summary (committed before portfolio — errors below can't erase it)
+                summary_dict = {item.tag: item.value for item in ib.accountSummary(acct)}
+                print(f"[api] accountSummary tags: {list(summary_dict.keys())}")
+                result["account_value"]      = _safe_float(summary_dict.get("NetLiquidation", 0))
+                result["buying_power"]       = _safe_float(summary_dict.get("BuyingPower",    0))
+                result["settled_cash"]       = _safe_float(summary_dict.get("TotalCashValue", 0))
+                result["unrealized_pnl"]     = _safe_float(summary_dict.get("UnrealizedPnL",  0))
+                result["realized_pnl"]       = _safe_float(summary_dict.get("RealizedPnL",    0))
+                result["maintenance_margin"] = _safe_float(summary_dict.get("MaintMarginReq", 0))
+                result["excess_liquidity"]   = _safe_float(summary_dict.get("AvailableFunds", 0))
+                result["account_summary"] = {
+                    "net_liquidation":    result["account_value"],
+                    "settled_cash":       result["settled_cash"],
+                    "unrealized_pnl":     result["unrealized_pnl"],
+                    "realized_pnl":       result["realized_pnl"],
+                    "maintenance_margin": result["maintenance_margin"],
+                    "excess_liquidity":   result["excess_liquidity"],
+                    "buying_power":       result["buying_power"],
+                }
+                result["connected"] = True
+
+                # ── Portfolio (separate try — account_summary already safe above)
+                try:
+                    ib.reqAccountUpdates(True)
+                    ib.sleep(5)                   # wait for updatePortfolio events
+                    raw_portfolio = ib.portfolio()
+                    ib.reqAccountUpdates(False)   # unsubscribe so disconnect is clean
+
+                    if not raw_portfolio:
+                        print("[api] ⚠️  Portfolio empty after 5s — account_summary returned without holdings")
+                    else:
+                        portfolio = []
+                        for item in raw_portfolio:
+                            c      = item.contract
+                            is_opt = c.secType == "OPT"
+                            portfolio.append({
+                                "symbol":        c.symbol,
+                                "secType":       c.secType,
+                                "right":         c.right if is_opt else None,
+                                "strike":        _safe_float(c.strike, 4) if is_opt else None,
+                                "expiry":        c.lastTradeDateOrContractMonth if is_opt else None,
+                                "position":      _safe_float(item.position, 0),
+                                "avgCost":       _safe_float(item.averageCost, 4),
+                                "marketPrice":   _safe_float(item.marketPrice, 4),
+                                "marketValue":   _safe_float(item.marketValue, 2),
+                                "unrealizedPNL": _safe_float(item.unrealizedPNL, 2),
+                                "realizedPNL":   _safe_float(item.realizedPNL, 2),
+                            })
+                        portfolio.sort(key=lambda x: (0 if x["secType"] == "STK" else 1, x["symbol"]))
+                        result["portfolio"] = portfolio
+                except Exception as pe:
+                    print(f"[api] Portfolio fetch failed (account_summary preserved): {pe}")
+
+            print(f"[api] net_liq={result['account_value']}  "
+                  f"unrealized={result['unrealized_pnl']}  "
+                  f"portfolio={len(result['portfolio'])} items")
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            print(f"[api] IBKR connection failed — {msg}")
+            traceback.print_exc()
+            result["error"] = msg
+        finally:
+            try:
+                ib.disconnect()
+            except Exception:
+                pass
+        return result
+
+    # Hard 15-second ceiling — the API never hangs even if IBKR is unresponsive.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_inner)
+        try:
+            result = future.result(timeout=15)
+        except concurrent.futures.TimeoutError:
+            print("[api] ⚠️  IBKR fetch timed out after 15s — returning empty result")
+            result = {**_IBKR_EMPTY, "error": "IBKR fetch timed out after 15s"}
 
     _ibkr_cache["data"] = result
-    _ibkr_cache["ts"] = now
+    _ibkr_cache["ts"]   = now
     return result
 
 def _scheduler_pid() -> Optional[int]:
