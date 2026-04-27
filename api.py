@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import random
 import re
 import subprocess
 import time
@@ -40,7 +41,7 @@ LIVE_PLACEHOLDERS = {
 
 PST = ZoneInfo("America/Los_Angeles")
 ANNUAL_TARGET = 100_000
-IBKR_API_CLIENT_ID = 10  # dedicated client ID — never conflicts with trader (1), wheel (2), risk (3)
+# clientId 100-999 used at runtime (random per call) — never conflicts with trader(1) wheel(2) risk(3)
 
 app = FastAPI(title="YRVI Dashboard API")
 app.add_middleware(
@@ -193,7 +194,6 @@ def _get_ibkr_data(settings: dict) -> dict:
     port = settings.get("ibkr_port", 4002)
     host = os.environ.get("IBKR_HOST", "127.0.0.1")
     account_env = settings.get("account") or os.environ.get("ACCOUNT", "")
-    print(f"[api] IBKR connect attempt → {host}:{port} clientId={IBKR_API_CLIENT_ID}")
 
     # FastAPI sync endpoints run in anyio thread-pool workers. In Python 3.12+
     # those threads have no event loop set, which causes ib_insync's sync API to
@@ -203,10 +203,12 @@ def _get_ibkr_data(settings: dict) -> dict:
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
+    client_id = random.randint(100, 999)
+    print(f"[api] IBKR connect attempt → {host}:{port} clientId={client_id}")
     from ib_insync import IB
     ib = IB()
     try:
-        ib.connect(host, port, clientId=IBKR_API_CLIENT_ID, timeout=5, readonly=False)
+        ib.connect(host, port, clientId=client_id, timeout=10, readonly=False)
         accts = ib.managedAccounts()
         acct = account_env or (accts[0] if accts else "")
         print(f"[api] IBKR connected — accounts: {accts}")
