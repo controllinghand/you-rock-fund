@@ -1,5 +1,5 @@
 #!/bin/bash
-PROJ="$HOME/you_rock_fund"
+PROJ="__PROJ__"
 osascript <<APPLESCRIPT
 tell application "Terminal"
     activate

@@ -82,8 +82,8 @@ IB Gateway uses different ports than TWS. `IBKR_PORT=4002` is the correct defaul
 ## Installation
 
 ```bash
-git clone https://github.com/controllinghand/you-rock-fund.git
-cd you-rock-fund
+git clone https://github.com/controllinghand/you-rock-fund.git you_rock_fund
+cd you_rock_fund
 ```
 
 Copy the template and fill in your credentials:

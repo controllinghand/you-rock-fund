@@ -441,7 +441,9 @@ mkdir -p "$DESKTOP_APP/Contents/Resources"
 # Copy bundle files from repo template
 cp "$PROJ/assets/app_template/Contents/Info.plist"        "$DESKTOP_APP/Contents/Info.plist"
 cp "$PROJ/assets/app_template/Contents/PkgInfo"           "$DESKTOP_APP/Contents/PkgInfo"
-cp "$PROJ/assets/app_template/Contents/MacOS/yrvi_startup" "$DESKTOP_APP/Contents/MacOS/yrvi_startup"
+sed -e "s|__PROJ__|$PROJ|g" \
+    "$PROJ/assets/app_template/Contents/MacOS/yrvi_startup" \
+    > "$DESKTOP_APP/Contents/MacOS/yrvi_startup"
 chmod +x "$DESKTOP_APP/Contents/MacOS/yrvi_startup"
 
 # Generate .icns from logo source (regenerate if logo is newer than cached icns)
