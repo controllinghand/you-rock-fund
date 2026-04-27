@@ -213,7 +213,7 @@ def _get_ibkr_data(settings: dict) -> dict:
         if acct:
             result["account"] = acct
 
-            # Account summary — collect all tags then extract by name
+            # ── Account summary (save before portfolio — don't let portfolio errors kill it)
             summary_dict = {item.tag: item.value for item in ib.accountSummary(acct)}
             print(f"[api] accountSummary tags: {list(summary_dict.keys())}")
             result["account_value"]      = _safe_float(summary_dict.get("NetLiquidation",  0))
@@ -222,35 +222,47 @@ def _get_ibkr_data(settings: dict) -> dict:
             result["unrealized_pnl"]     = _safe_float(summary_dict.get("UnrealizedPnL",   0))
             result["realized_pnl"]       = _safe_float(summary_dict.get("RealizedPnL",     0))
             result["maintenance_margin"] = _safe_float(summary_dict.get("MaintMarginReq",  0))
-            result["excess_liquidity"]   = _safe_float(summary_dict.get("ExcessLiquidity", 0))
+            result["excess_liquidity"]   = _safe_float(summary_dict.get("AvailableFunds",  0))
+            result["account_summary"] = {
+                "net_liquidation":    result["account_value"],
+                "settled_cash":       result["settled_cash"],
+                "unrealized_pnl":     result["unrealized_pnl"],
+                "realized_pnl":       result["realized_pnl"],
+                "maintenance_margin": result["maintenance_margin"],
+                "excess_liquidity":   result["excess_liquidity"],
+                "buying_power":       result["buying_power"],
+            }
+            result["connected"] = True   # account data good — mark connected now
 
-            # Portfolio items with live market prices
-            ib.reqAccountUpdates(True, acct)
-            ib.sleep(2)   # allow updatePortfolio events to populate the cache
-            raw_portfolio = ib.portfolio(acct)
+            # ── Portfolio items (separate try — failure preserves account_summary above)
+            try:
+                ib.reqAccountUpdates(True)
+                ib.sleep(3)   # allow updatePortfolio events to populate the cache
+                raw_portfolio = ib.portfolio()
 
-            portfolio = []
-            for item in raw_portfolio:
-                c = item.contract
-                is_opt = c.secType == "OPT"
-                portfolio.append({
-                    "symbol":       c.symbol,
-                    "secType":      c.secType,
-                    "right":        c.right if is_opt else None,
-                    "strike":       _safe_float(c.strike, 4) if is_opt else None,
-                    "expiry":       c.lastTradeDateOrContractMonth if is_opt else None,
-                    "position":     _safe_float(item.position, 0),
-                    "avgCost":      _safe_float(item.averageCost, 4),
-                    "marketPrice":  _safe_float(item.marketPrice, 4),
-                    "marketValue":  _safe_float(item.marketValue, 2),
-                    "unrealizedPNL":_safe_float(item.unrealizedPNL, 2),
-                    "realizedPNL":  _safe_float(item.realizedPNL, 2),
-                })
+                portfolio = []
+                for item in raw_portfolio:
+                    c = item.contract
+                    is_opt = c.secType == "OPT"
+                    portfolio.append({
+                        "symbol":        c.symbol,
+                        "secType":       c.secType,
+                        "right":         c.right if is_opt else None,
+                        "strike":        _safe_float(c.strike, 4) if is_opt else None,
+                        "expiry":        c.lastTradeDateOrContractMonth if is_opt else None,
+                        "position":      _safe_float(item.position, 0),
+                        "avgCost":       _safe_float(item.averageCost, 4),
+                        "marketPrice":   _safe_float(item.marketPrice, 4),
+                        "marketValue":   _safe_float(item.marketValue, 2),
+                        "unrealizedPNL": _safe_float(item.unrealizedPNL, 2),
+                        "realizedPNL":   _safe_float(item.realizedPNL, 2),
+                    })
 
-            # Sort: stocks first, then options; alphabetical within each group
-            portfolio.sort(key=lambda x: (0 if x["secType"] == "STK" else 1, x["symbol"]))
-            result["portfolio"] = portfolio
-            result["connected"] = True
+                portfolio.sort(key=lambda x: (0 if x["secType"] == "STK" else 1, x["symbol"]))
+                result["portfolio"] = portfolio
+            except Exception as pe:
+                print(f"[api] Portfolio fetch failed (account_summary preserved): {pe}")
+
         print(f"[api] IBKR net_liq={result['account_value']} "
               f"unrealized_pnl={result['unrealized_pnl']} "
               f"portfolio_items={len(result['portfolio'])}")
@@ -351,25 +363,16 @@ def get_positions():
 
     settings = load_settings()
     ibkr = _get_ibkr_data(settings)
-    acct = ibkr.get("account_value")
 
     return {
-        "positions":      enriched,
-        "csp_positions":  enriched,
-        "wheel_holdings": state.get("wheel_holdings", []),
-        "weekly_pnl":     state.get("weekly_pnl", {}),
-        "run_date":       state.get("run_date"),
-        "monday_context": state.get("monday_context", {}),
-        "portfolio":      ibkr.get("portfolio", []),
-        "account_summary": {
-            "net_liquidation":    acct,
-            "settled_cash":       ibkr.get("settled_cash"),
-            "unrealized_pnl":     ibkr.get("unrealized_pnl"),
-            "realized_pnl":       ibkr.get("realized_pnl"),
-            "maintenance_margin": ibkr.get("maintenance_margin"),
-            "excess_liquidity":   ibkr.get("excess_liquidity"),
-            "buying_power":       ibkr.get("buying_power"),
-        } if ibkr.get("connected") else None,
+        "positions":       enriched,
+        "csp_positions":   enriched,
+        "wheel_holdings":  state.get("wheel_holdings", []),
+        "weekly_pnl":      state.get("weekly_pnl", {}),
+        "run_date":        state.get("run_date"),
+        "monday_context":  state.get("monday_context", {}),
+        "portfolio":       ibkr.get("portfolio", []),
+        "account_summary": ibkr.get("account_summary"),  # None when IBKR disconnected
     }
 
 @app.get("/api/performance")
