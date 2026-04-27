@@ -213,16 +213,19 @@ def _get_ibkr_data(settings: dict) -> dict:
         if acct:
             result["account"] = acct
 
-            # Account summary (NetLiq, BuyingPower, Cash, PnL, Margin …)
-            for item in ib.accountSummary(acct):
-                if item.currency != "USD":
-                    continue
-                key = _TAG_KEY.get(item.tag)
-                if key:
-                    result[key] = _safe_float(item.value)
+            # Account summary — collect all tags then extract by name
+            summary_dict = {item.tag: item.value for item in ib.accountSummary(acct)}
+            print(f"[api] accountSummary tags: {list(summary_dict.keys())}")
+            result["account_value"]      = _safe_float(summary_dict.get("NetLiquidation",  0))
+            result["buying_power"]       = _safe_float(summary_dict.get("BuyingPower",     0))
+            result["settled_cash"]       = _safe_float(summary_dict.get("TotalCashValue",  0))
+            result["unrealized_pnl"]     = _safe_float(summary_dict.get("UnrealizedPnL",   0))
+            result["realized_pnl"]       = _safe_float(summary_dict.get("RealizedPnL",     0))
+            result["maintenance_margin"] = _safe_float(summary_dict.get("MaintMarginReq",  0))
+            result["excess_liquidity"]   = _safe_float(summary_dict.get("ExcessLiquidity", 0))
 
             # Portfolio items with live market prices
-            ib.reqAccountUpdates(subscribe=True, acctCode=acct)
+            ib.reqAccountUpdates(True, acct)
             ib.sleep(2)   # allow updatePortfolio events to populate the cache
             raw_portfolio = ib.portfolio(acct)
 
