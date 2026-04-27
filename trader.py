@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import time
 from datetime import datetime, timezone
 from ib_insync import IB, Option, LimitOrder, MarketOrder
 
@@ -22,6 +23,8 @@ MID_WAIT_SECS       = 120
 BID_WAIT_SECS       = 120
 MARKET_WAIT_SECS    = 60    # total polling window for market orders
 MARKET_POLL_SECS    = 5     # check every N seconds
+RECONNECT_WAIT_SECS = 30
+MAX_RECONNECTS      = 3
 
 
 def connect() -> IB:
@@ -32,6 +35,19 @@ def connect() -> IB:
     log.info(f"✅ Connected to IBKR — Account: {ib.managedAccounts()}")
     log.info(f"   Market data type: DELAYED (type 3)")
     return ib
+
+
+def _reconnect(ib: IB) -> IB:
+    """Disconnect, wait RECONNECT_WAIT_SECS, and return a fresh IB connection."""
+    log.warning(f"⚠️  IBKR disconnected — waiting {RECONNECT_WAIT_SECS}s before reconnecting...")
+    try:
+        ib.disconnect()
+    except Exception:
+        pass
+    time.sleep(RECONNECT_WAIT_SECS)
+    new_ib = connect()
+    log.info("✅ Reconnected to IBKR — resuming execution")
+    return new_ib
 
 
 def parse_expiry(expiry_str: str) -> str:
@@ -264,42 +280,59 @@ def execute_positions(sized_positions: list, extra_targets: list = None) -> list
                 return p
         return None
 
-    slot = 0
+    slot       = 0
+    reconnects = 0
+
     while filled_count < NUM_POSITIONS:
         pos = next_candidate()
         if pos is None:
             log.warning(f"⚠️  No more candidates — {filled_count}/{NUM_POSITIONS} positions filled")
             break
 
-        slot    += 1
-        ticker   = pos["ticker"]
+        slot      += 1
+        ticker     = pos["ticker"]
         attempted.add(ticker)
-        strike   = pos["strike"]
-        expiry   = pos["expiry"]
-        contracts = pos["contracts"]
-        premium  = pos["premium"]
+        strike     = pos["strike"]
+        expiry     = pos["expiry"]
+        contracts  = pos["contracts"]
+        premium    = pos["premium"]
 
         log.info(f"\n[attempt {slot}  fill {filled_count + 1}/{NUM_POSITIONS}] "
                  f"{ticker} — {contracts} contracts @ ${strike:.2f} strike")
 
-        contract = get_option_contract(ib, ticker, strike, expiry)
-        if not contract:
-            log.info(f"  🔄 {ticker} — qualify failed, trying next candidate")
-            results.append({"ticker": ticker, "status": "failed_qualify"})
+        try:
+            contract = get_option_contract(ib, ticker, strike, expiry)
+            if not contract:
+                log.info(f"  🔄 {ticker} — qualify failed, trying next candidate")
+                results.append({"ticker": ticker, "status": "failed_qualify"})
+                continue
+
+            mkt = get_market_data(ib, contract, screener_premium=premium)
+            if not mkt:
+                log.info(f"  🔄 {ticker} — no market data, trying next candidate")
+                results.append({"ticker": ticker, "status": "failed_market_data"})
+                continue
+
+            if not check_liquidity(mkt, ticker):
+                log.info(f"  🔄 {ticker} — failed liquidity, trying next candidate")
+                results.append({"ticker": ticker, "status": "skipped_liquidity"})
+                continue
+
+            result = place_order_with_escalation(ib, contract, contracts, mkt, ticker)
+        except Exception as e:
+            log.error(f"  ❌ {ticker} — IBKR error: {e}")
+            results.append({"ticker": ticker, "status": "failed"})
+            if reconnects >= MAX_RECONNECTS:
+                log.error(f"  ❌ Max reconnects ({MAX_RECONNECTS}) reached — stopping execution")
+                break
+            try:
+                ib = _reconnect(ib)
+                reconnects += 1
+            except Exception as re:
+                log.error(f"  ❌ Reconnect failed: {re} — stopping execution")
+                break
             continue
 
-        mkt = get_market_data(ib, contract, screener_premium=premium)
-        if not mkt:
-            log.info(f"  🔄 {ticker} — no market data, trying next candidate")
-            results.append({"ticker": ticker, "status": "failed_market_data"})
-            continue
-
-        if not check_liquidity(mkt, ticker):
-            log.info(f"  🔄 {ticker} — failed liquidity, trying next candidate")
-            results.append({"ticker": ticker, "status": "skipped_liquidity"})
-            continue
-
-        result = place_order_with_escalation(ib, contract, contracts, mkt, ticker)
         results.append(result)
 
         if result["status"] in ("filled", "dry_run", "partial_fill"):

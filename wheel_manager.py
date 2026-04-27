@@ -22,6 +22,7 @@ from ib_insync import IB, Stock, Option, LimitOrder, MarketOrder
 
 from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID_WHEEL, ACCOUNT
 from screener import get_all_candidates
+import discord_poster
 
 STATE_FILE       = "state.json"
 MID_WAIT_SECS    = 120
@@ -327,6 +328,8 @@ def detect_assignments():
 
     ib = _connect()
     try:
+        ib.reqPositions()   # populate cache — positions() reads local cache only
+        ib.sleep(2)
         ibkr_positions = ib.positions(account=ACCOUNT)
         stock_positions = {
             p.contract.symbol: int(p.position)
@@ -338,11 +341,17 @@ def detect_assignments():
 
     log.info(f"📊 Found {len(stock_positions)} stock position(s) in IBKR")
 
-    updated = []
+    if not stock_positions and existing_holdings:
+        log.error(f"❌ IBKR returned 0 stock positions but {len(existing_holdings)} "
+                  f"holding(s) already on record — skipping save to avoid data loss")
+        return
+
+    updated         = []
+    new_assignments = []
     for ticker, shares in stock_positions.items():
         if ticker in existing_holdings:
-            h           = existing_holdings[ticker]
-            h["shares"] = shares
+            h             = existing_holdings[ticker]
+            h["shares"]   = shares
             h["last_checked"] = datetime.now().isoformat()
             log.info(f"  ✅ {ticker}: {shares} shares (existing — updated count)")
         else:
@@ -365,6 +374,7 @@ def detect_assignments():
             }
             log.info(f"  🆕 NEW ASSIGNMENT: {ticker}  {shares} shares  "
                      f"@ ${assigned_strike:.2f}")
+            new_assignments.append(h)
         updated.append(h)
 
     for ticker in existing_holdings:
@@ -375,6 +385,9 @@ def detect_assignments():
     _save_state(state)
     log.info(f"\n💾 Saved {len(updated)} wheel holding(s) to state.json")
     log.info("=" * 65)
+
+    if new_assignments:
+        discord_poster.post_assignment_alert(new_assignments)
 
 
 def run_wheel_check() -> tuple[float, list]:
