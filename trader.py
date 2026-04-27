@@ -3,7 +3,7 @@ import logging
 import math
 import time
 from datetime import datetime, timezone
-from ib_insync import IB, Option, LimitOrder, MarketOrder
+from ib_insync import IB, Option, Stock, LimitOrder, MarketOrder
 
 from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, ACCOUNT, NUM_POSITIONS, TOTAL_FUND_BUDGET, DRY_RUN
 
@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 MAX_SPREAD_PCT      = 0.20
 MIN_OPEN_INTEREST   = 100
+MAX_DELTA           = 0.21  # hard ceiling — never sell a CSP with abs(delta) above this
 MID_WAIT_SECS       = 120
 BID_WAIT_SECS       = 120
 MARKET_WAIT_SECS    = 60    # total polling window for market orders
@@ -75,6 +76,110 @@ def is_nan(val) -> bool:
         return val != val  # nan != nan is True
     except:
         return True
+
+
+def _get_delta_for_contract(ib: IB, contract) -> float | None:
+    """Request delayed market data and return put delta. Returns None if IBKR has no data."""
+    tkr = ib.reqMktData(contract, genericTickList="106", snapshot=False)
+    ib.sleep(3)
+    ib.cancelMktData(contract)
+    ib.sleep(0.5)
+    for greeks in (tkr.modelGreeks, tkr.lastGreeks, tkr.bidGreeks, tkr.askGreeks):
+        if greeks is not None and not is_nan(greeks.delta):
+            return greeks.delta
+    return None
+
+
+def verify_and_adjust_strike(
+        ib: IB, ticker: str, screener_strike: float,
+        expiry_str: str, screener_delta: float,
+) -> tuple | None:
+    """
+    Check live delta for screener_strike at execution time.
+
+    If abs(delta) > MAX_DELTA (stock moved since Saturday): scan the option chain
+    downward for the nearest strike with delta ≤ MAX_DELTA and use that instead.
+
+    Returns (qualified_contract, final_strike, orig_delta, final_delta, was_adjusted)
+    or None if qualification fails or no valid strike is found.
+    """
+    expiry = parse_expiry(expiry_str)
+
+    # Qualify and delta-check the screener strike
+    c = Option(ticker, expiry, screener_strike, "P", "SMART", currency="USD")
+    try:
+        qualified = ib.qualifyContracts(c)
+        if not qualified:
+            log.warning(f"  ⚠️  {ticker} — qualify failed during delta check")
+            return None
+        c = qualified[0]
+    except Exception as e:
+        log.error(f"  ❌ {ticker} delta-check qualify error: {e}")
+        return None
+
+    live_delta = _get_delta_for_contract(ib, c)
+
+    if live_delta is None:
+        log.warning(f"  ⚠️  {ticker} — no live delta from IBKR; "
+                    f"trusting screener delta {screener_delta:.3f}")
+        live_delta = screener_delta
+
+    orig_delta = live_delta
+
+    if abs(live_delta) <= MAX_DELTA:
+        log.info(f"  ✅ {ticker} delta OK: {live_delta:.3f} ≤ {MAX_DELTA} "
+                 f"at ${screener_strike:.2f}")
+        return c, screener_strike, orig_delta, live_delta, False
+
+    log.warning(f"  ⚠️  {ticker} ${screener_strike:.2f} delta {live_delta:.3f} > {MAX_DELTA} "
+                f"— scanning chain for adjusted strike")
+
+    # Get option chain strikes for this expiry
+    try:
+        stk = Stock(ticker, "SMART", "USD")
+        stk_q = ib.qualifyContracts(stk)
+        if not stk_q:
+            log.error(f"  ❌ {ticker} — can't qualify stock for chain lookup")
+            return None
+        und_con_id = stk_q[0].conId
+    except Exception as e:
+        log.error(f"  ❌ {ticker} stock qualify error for chain lookup: {e}")
+        return None
+
+    chains = ib.reqSecDefOptParams(ticker, "", "STK", und_con_id)
+    ib.sleep(1)
+
+    candidates = []
+    for ch in chains:
+        if expiry in (ch.expirations or []):
+            candidates.extend(s for s in ch.strikes if s < screener_strike)
+
+    if not candidates:
+        log.error(f"  ❌ {ticker} — no lower strikes in chain for {expiry}")
+        return None
+
+    # Scan from closest strike downward; return first that satisfies delta ≤ MAX_DELTA
+    for alt_strike in sorted(set(candidates), reverse=True)[:10]:
+        alt_c = Option(ticker, expiry, alt_strike, "P", "SMART", currency="USD")
+        try:
+            alt_q = ib.qualifyContracts(alt_c)
+            if not alt_q:
+                continue
+            alt_c = alt_q[0]
+        except Exception:
+            continue
+
+        alt_delta = _get_delta_for_contract(ib, alt_c)
+        if alt_delta is None:
+            continue
+
+        if abs(alt_delta) <= MAX_DELTA:
+            log.warning(f"  ⚠️  {ticker} strike adjusted ${screener_strike:.2f} → ${alt_strike:.2f} "
+                        f"(delta {orig_delta:.3f} → {alt_delta:.3f})")
+            return alt_c, alt_strike, orig_delta, alt_delta, True
+
+    log.error(f"  ❌ {ticker} — no valid strike found with delta ≤ {MAX_DELTA} — skipping")
+    return None
 
 
 def get_market_data(ib: IB, contract, screener_premium: float) -> dict | None:
@@ -298,14 +403,25 @@ def execute_positions(sized_positions: list, extra_targets: list = None) -> list
         premium    = pos["premium"]
 
         log.info(f"\n[attempt {slot}  fill {filled_count + 1}/{NUM_POSITIONS}] "
-                 f"{ticker} — {contracts} contracts @ ${strike:.2f} strike")
+                 f"{ticker} — {contracts} contracts @ ${strike:.2f} (screener strike)")
 
         try:
-            contract = get_option_contract(ib, ticker, strike, expiry)
-            if not contract:
-                log.info(f"  🔄 {ticker} — qualify failed, trying next candidate")
-                results.append({"ticker": ticker, "status": "failed_qualify"})
+            # Verify delta at execution time — auto-adjust if stock moved since Saturday
+            delta_result = verify_and_adjust_strike(
+                ib, ticker, strike, expiry, screener_delta=pos.get("delta", 0.0)
+            )
+            if delta_result is None:
+                log.info(f"  🔄 {ticker} — no valid strike with delta ≤ {MAX_DELTA}, trying next")
+                results.append({"ticker": ticker, "status": "skipped_delta"})
                 continue
+
+            contract, strike, orig_delta, final_delta, was_adjusted = delta_result
+            if was_adjusted:
+                old_capital  = pos["capital_used"]
+                contracts    = pos["contracts"]
+                new_capital  = round(contracts * strike * 100, 2)
+                pos          = {**pos, "strike": strike, "capital_used": new_capital}
+                log.info(f"  ⚡ Capital adjusted: ${old_capital:,.0f} → ${new_capital:,.0f}")
 
             mkt = get_market_data(ib, contract, screener_premium=premium)
             if not mkt:

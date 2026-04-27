@@ -104,6 +104,8 @@ def size_all(targets: list, budget: float = None, num_positions: int = None) -> 
     if total_capital > 0:
         print(f"  Blended Weekly Yield:   {(total_premium/total_capital)*100:.2f}%")
     print("=" * 65)
+    print("  ⚠️  Deltas may shift by Monday — system will auto-adjust strikes at execution time")
+    print("=" * 65)
 
     return sized
 
