@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-WEBHOOK_URL   = os.getenv("DISCORD_WEBHOOK_URL")
+WEBHOOK_URL            = os.getenv("DISCORD_WEBHOOK_URL")
+WEBHOOK_URL_WEEKLY_PLAN = os.getenv("DISCORD_WEBHOOK_WEEKLY_PLAN")
 YTD_FILE      = "ytd_tracker.json"
 PST           = ZoneInfo("America/Los_Angeles")
 ANNUAL_TARGET = 100_000
@@ -28,6 +29,10 @@ def is_enabled() -> bool:
     return bool(WEBHOOK_URL)
 
 
+def is_plan_enabled() -> bool:
+    return bool(WEBHOOK_URL_WEEKLY_PLAN)
+
+
 def _post(payload: dict) -> bool:
     try:
         r = requests.post(WEBHOOK_URL, json=payload, timeout=10)
@@ -35,6 +40,16 @@ def _post(payload: dict) -> bool:
         return True
     except Exception as e:
         print(f"[discord] post failed: {e}")
+        return False
+
+
+def _post_plan(payload: dict) -> bool:
+    try:
+        r = requests.post(WEBHOOK_URL_WEEKLY_PLAN, json=payload, timeout=10)
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"[discord] weekly plan post failed: {e}")
         return False
 
 
@@ -179,6 +194,57 @@ def _yield_emoji(yield_pct: float) -> str:
     elif yield_pct >= 0.5:
         return "🟡"
     return "🔴"
+
+
+def post_weekly_plan(positions: list):
+    """Post Saturday evening weekly trading plan to the #yrvi-weekly-plan channel."""
+    if not WEBHOOK_URL_WEEKLY_PLAN:
+        return
+
+    from datetime import timedelta
+    now = datetime.now(PST)
+    days_to_monday = (7 - now.weekday()) % 7 or 7
+    next_monday = (now + timedelta(days=days_to_monday)).strftime("%b %d, %Y")
+
+    lines = []
+    total_capital = 0.0
+    total_premium = 0.0
+    for i, p in enumerate(positions[:5], 1):
+        strike        = p["strike"]
+        contracts     = p["contracts"]
+        capital_used  = p["capital_used"]
+        buffer_pct    = p["buffer_pct"]
+        premium_total = p["premium_total"]
+        yield_pct     = p["yield_pct"]
+        dte           = p.get("days_to_earnings")
+
+        earn_str = f" | Earnings: {dte} days" if dte is not None and dte > 0 else ""
+        lines.append(
+            f"✅ **#{i} {p['ticker']}** | Strike {_fmt_strike(strike)} | "
+            f"{contracts} contracts | ${capital_used:,.0f}\n"
+            f"　　Buffer: {buffer_pct:.1f}% | Premium: ${premium_total:,.0f} "
+            f"({yield_pct:.2f}%){earn_str}"
+        )
+        total_capital += capital_used
+        total_premium += premium_total
+
+    blended_yield = (total_premium / total_capital * 100) if total_capital else 0.0
+    run_time = now.strftime("%I:%M %p %Z").lstrip("0")
+
+    _post_plan({"embeds": [{
+        "title":       f"📋 YRVI Week of {next_monday} — Trading Plan",
+        "description": "\n".join(lines) if lines else "No positions sized.",
+        "color":       0x0099FF,
+        "fields": [
+            {"name": "Capital Deployed", "value": f"${total_capital:,.0f}", "inline": True},
+            {"name": "Est. Premium",     "value": f"${total_premium:,.0f}", "inline": True},
+            {"name": "Blended Yield",    "value": f"{blended_yield:.2f}%",  "inline": True},
+            {"name": "​",           "value": "Results posted Monday after execution ✅",
+             "inline": False},
+        ],
+        "footer":    {"text": f"Screener run {run_time}"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }]})
 
 
 def post_weekly_results(state: dict, fund_budget: float = 250_000):

@@ -33,20 +33,21 @@ def size_position(target: dict, available_capital: float, is_last: bool = False)
     yield_pct     = target["put_20d_premium_pct"] * 100
 
     return {
-        "ticker":        target["ticker"],
-        "strike":        strike,
-        "premium":       target["put_20d_premium"],
-        "expiry":        target["expiry"],
-        "contracts":     contracts,
-        "capital_used":  capital_used,
-        "premium_total": premium_total,
-        "yield_pct":     yield_pct,
-        "delta":         target["put_20d_delta"],
-        "iv_atm":        target["iv_atm"],
-        "sector":        target.get("sector", ""),
-        "latest_price":  target["latest_price"],
-        "buffer_pct":    target["_buffer_pct"] * 100,
-        "buyzone":       target.get("buyzone_flag", False),
+        "ticker":           target["ticker"],
+        "strike":           strike,
+        "premium":          target["put_20d_premium"],
+        "expiry":           target["expiry"],
+        "contracts":        contracts,
+        "capital_used":     capital_used,
+        "premium_total":    premium_total,
+        "yield_pct":        yield_pct,
+        "delta":            target["put_20d_delta"],
+        "iv_atm":           target["iv_atm"],
+        "sector":           target.get("sector", ""),
+        "latest_price":     target["latest_price"],
+        "buffer_pct":       target["_buffer_pct"] * 100,
+        "buyzone":          target.get("buyzone_flag", False),
+        "days_to_earnings": target.get("days_to_earnings"),
     }
 
 def size_all(targets: list, budget: float = None) -> list:

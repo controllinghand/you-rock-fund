@@ -73,6 +73,11 @@ def run_screener_preview():
         positions = size_all(targets)
         exec_time = _load_settings().get("execution_time", "10:00")
         log.info(f"\n📋 {len(positions)} positions queued for Monday {exec_time} PST")
+
+        from discord_poster import is_plan_enabled, post_weekly_plan
+        if is_plan_enabled():
+            post_weekly_plan(positions)
+            log.info("✅ Weekly plan posted to Discord")
     except Exception as e:
         log.error(f"❌ Preview error: {e}", exc_info=True)
     finally:
