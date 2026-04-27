@@ -69,9 +69,18 @@ def run_screener_preview():
         from screener import get_top_targets
         from position_sizer import size_all
 
-        targets   = get_top_targets(10)
-        positions = size_all(targets)
-        exec_time = _load_settings().get("execution_time", "10:00")
+        state        = _load_state()
+        holdings     = state.get("wheel_holdings", [])
+        reserved     = round(sum(
+            h.get("shares", 0) * h.get("assigned_strike", 0.0)
+            for h in holdings if h.get("shares", 0) > 0
+        ), 2)
+        active_count = sum(1 for h in holdings if h.get("shares", 0) > 0)
+        targets      = get_top_targets(10)
+        budget       = TOTAL_FUND_BUDGET - reserved
+        target_n     = max(1, NUM_POSITIONS - active_count)
+        positions    = size_all(targets, budget=budget, num_positions=target_n)
+        exec_time    = _load_settings().get("execution_time", "10:00")
         log.info(f"\n📋 {len(positions)} positions queued for Monday {exec_time} PST")
 
         from discord_poster import is_plan_enabled, post_weekly_plan
@@ -128,10 +137,18 @@ def run_discord_preview():
         context      = state.get("monday_context", {})
         skip_tickers = set(context.get("skip_tickers", []))
         freed        = context.get("freed_capital", 0.0)
+        # wheel_check hasn't run yet — estimate from current holdings
+        holdings     = state.get("wheel_holdings", [])
+        reserved     = round(sum(
+            h.get("shares", 0) * h.get("assigned_strike", 0.0)
+            for h in holdings if h.get("shares", 0) > 0
+        ), 2)
+        active_count = sum(1 for h in holdings if h.get("shares", 0) > 0)
         targets      = get_top_targets(10)
         filtered     = [t for t in targets if t["ticker"] not in skip_tickers]
-        budget       = TOTAL_FUND_BUDGET + freed
-        positions    = size_all(filtered, budget=budget)
+        budget       = TOTAL_FUND_BUDGET + freed - reserved
+        target_n     = max(1, NUM_POSITIONS - active_count)
+        positions    = size_all(filtered, budget=budget, num_positions=target_n)
         post_preview(positions, budget)
         log.info("✅ Discord preview posted")
     except Exception as e:
@@ -150,8 +167,9 @@ def run_wheel_check_job():
     log.info("=" * 65)
     try:
         from wheel_manager import run_wheel_check
-        freed, skip = run_wheel_check()
-        log.info(f"✅ Wheel check done — freed ${freed:,.0f}  skip {skip or 'none'}")
+        freed, skip, reserved = run_wheel_check()
+        log.info(f"✅ Wheel check done — freed ${freed:,.0f}  "
+                 f"reserved ${reserved:,.0f}  skip {skip or 'none'}")
     except Exception as e:
         log.error(f"❌ Wheel check error: {e}", exc_info=True)
     finally:
@@ -174,26 +192,36 @@ def run_pipeline():
         # Read context left by wheel_check (9:55AM)
         state         = _load_state()
         context       = state.get("monday_context", {})
-        skip_tickers  = set(context.get("skip_tickers", []))
-        freed_capital = context.get("freed_capital", 0.0)
+        skip_tickers       = set(context.get("skip_tickers", []))
+        freed_capital      = context.get("freed_capital", 0.0)
+        reserved_capital   = context.get("reserved_capital", 0.0)
+        active_wheel_count = context.get("active_wheel_count", 0)
 
         if skip_tickers:
             log.info(f"  🚫 Skipping tickers (wheel exits): {skip_tickers}")
         if freed_capital > 0:
             log.info(f"  💰 Freed capital added to pool: ${freed_capital:,.0f}")
+        if reserved_capital > 0:
+            log.info(f"  🔒 Capital reserved for {active_wheel_count} wheel holding(s): "
+                     f"${reserved_capital:,.0f}")
 
         all_targets = get_top_targets(10)
         if not all_targets:
             log.error("❌ No targets returned — aborting"); return
 
-        # Filter out stop-loss tickers so they don't re-enter as CSPs this week
+        # Filter out wheel-exit tickers so they don't re-enter as CSPs this week
         filtered_targets = [t for t in all_targets if t["ticker"] not in skip_tickers]
         if len(filtered_targets) < len(all_targets):
             log.info(f"  Filtered {len(all_targets) - len(filtered_targets)} ticker(s) "
                      f"from screener results")
 
-        effective_budget = TOTAL_FUND_BUDGET + freed_capital
-        positions = size_all(filtered_targets, budget=effective_budget)
+        effective_budget = TOTAL_FUND_BUDGET + freed_capital - reserved_capital
+        target_fills     = max(1, NUM_POSITIONS - active_wheel_count)
+        if target_fills < NUM_POSITIONS:
+            log.info(f"  🔢 Targeting {target_fills} CSP(s) "
+                     f"({active_wheel_count} wheel holding(s) active)")
+        positions = size_all(filtered_targets, budget=effective_budget,
+                             num_positions=target_fills)
         if not positions:
             log.error("❌ No positions sized — aborting"); return
 
@@ -222,7 +250,7 @@ def run_pipeline():
         if is_enabled():
             post_weekly_results(_load_state(), fund_budget=effective_budget)
 
-        log.info(f"\n✅ Done — {len(filled)}/{NUM_POSITIONS} CSP fills  |  "
+        log.info(f"\n✅ Done — {len(filled)}/{target_fills} CSP fills  |  "
                  f"CSP ${csp_premium:,.0f}  CC ${cc_premium:,.0f}  "
                  f"Shares sold P&L ${shares_sold_pnl:,.0f}  "
                  f"Total realized ${total_realized:,.0f}")

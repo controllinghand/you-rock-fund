@@ -50,14 +50,15 @@ def size_position(target: dict, available_capital: float, is_last: bool = False)
         "days_to_earnings": target.get("days_to_earnings"),
     }
 
-def size_all(targets: list, budget: float = None) -> list:
+def size_all(targets: list, budget: float = None, num_positions: int = None) -> list:
+    num              = num_positions if num_positions is not None else NUM_POSITIONS
     remaining_budget = budget if budget is not None else TOTAL_FUND_BUDGET
     effective_budget = remaining_budget
 
-    # Pass 1: size positions #2–#5 at TARGET from targets[1:]
+    # Pass 1: size positions #2–#N at TARGET from targets[1:]
     rest_sized   = []
     target_index = 1
-    while len(rest_sized) < NUM_POSITIONS - 1 and target_index < len(targets):
+    while len(rest_sized) < num - 1 and target_index < len(targets):
         result = size_position(targets[target_index], remaining_budget, is_last=False)
         if result:
             rest_sized.append(result)
@@ -75,7 +76,7 @@ def size_all(targets: list, budget: float = None) -> list:
     sized = top_sized + rest_sized
 
     print("\n💼 Position Sizing Summary")
-    print(f"   Fund Budget: ${effective_budget:,.0f}  |  Target: ${TARGET_PER_POSITION:,.0f}/pos (#2–5)  |  Max #1: ${MAX_PER_POSITION:,.0f}")
+    print(f"   Fund Budget: ${effective_budget:,.0f}  |  Target: ${TARGET_PER_POSITION:,.0f}/pos (#2–{num})  |  Max #1: ${MAX_PER_POSITION:,.0f}")
     print("=" * 65)
 
     total_capital = 0
@@ -96,7 +97,7 @@ def size_all(targets: list, budget: float = None) -> list:
 
     leftover = effective_budget - total_capital
     print("\n" + "=" * 65)
-    print(f"  Positions Filled:       {len(sized)} / {NUM_POSITIONS}")
+    print(f"  Positions Filled:       {len(sized)} / {num}")
     print(f"  Total Capital Deployed: ${total_capital:,.0f}")
     print(f"  Undeployed Cash:        ${leftover:,.0f}")
     print(f"  Total Premium Income:   ${total_premium:,.0f}")

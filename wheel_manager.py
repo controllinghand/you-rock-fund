@@ -404,7 +404,7 @@ def run_wheel_check() -> tuple[float, list]:
               call. If no such strike exists, sell shares at market.
       Step 5  Persist monday_context and wheel_activity to state.json.
 
-    Returns (freed_capital, skip_tickers) consumed by run_pipeline.
+    Returns (freed_capital, skip_tickers, reserved_capital) consumed by run_pipeline.
     """
     log.info("\n" + "=" * 65)
     log.info(f"🔄 MONDAY WHEEL CHECK — "
@@ -414,37 +414,59 @@ def run_wheel_check() -> tuple[float, list]:
     state    = _load_state()
     holdings = state.get("wheel_holdings", [])
 
-    empty_context = {
-        "skip_tickers": [], "freed_capital": 0.0, "cc_premium": 0.0,
-        "shares_sold_pnl": 0.0, "wheel_activity": [],
-        "updated": datetime.now().isoformat()
-    }
-
-    if not holdings:
-        log.info("📭 No wheel holdings — nothing to do")
-        state["monday_context"] = empty_context
-        _save_state(state)
-        return 0.0, []
-
-    # Screener candidates (Steps 1 & 2 prerequisite)
-    log.info("\n📡 Fetching screener candidates...")
-    candidate_info = get_all_candidates()   # dict[ticker, {days_to_earnings, ...}]
-    if candidate_info:
-        log.info(f"  ✅ {len(candidate_info)} ticker(s) pass screener filters")
-    else:
-        log.warning("  ⚠️  Screener returned 0 tickers — API may be down")
-        log.warning("  Skipping screener/earnings checks; will attempt CCs for all holdings")
-
-    expiry          = _next_friday_expiry()
     freed_capital   = 0.0
     skip_tickers    = []
     cc_premium      = 0.0
     shares_sold_pnl = 0.0
     wheel_activity  = []
+    candidate_info  = {}
+    expiry          = _next_friday_expiry()
 
     ib = _connect()
 
     try:
+        # ── Step 0: Sync against live IBKR stock positions ────
+        # Catches assignments that detect_assignments() may have missed on Friday.
+        ib.reqPositions()
+        ib.sleep(2)
+        live_pos      = ib.positions(account=ACCOUNT)
+        strike_lookup = {p["ticker"]: p["strike"] for p in state.get("positions", [])}
+        known_tickers = {h["ticker"] for h in holdings}
+        for p in live_pos:
+            if p.contract.secType == "STK" and int(p.position) > 0:
+                sym = p.contract.symbol
+                if sym not in known_tickers:
+                    strike = strike_lookup.get(sym, 0.0)
+                    log.warning(f"⚠️  Untracked stock detected: {sym} "
+                                f"{int(p.position)} shares @ ${strike:.2f} — "
+                                f"adding to wheel_holdings")
+                    holdings.append({
+                        "ticker":             sym,
+                        "shares":             int(p.position),
+                        "assigned_strike":    strike,
+                        "assignment_date":    datetime.now().date().isoformat(),
+                        "current_cc_strike":  None,
+                        "current_cc_expiry":  None,
+                        "current_cc_premium": 0.0,
+                        "weeks_held":         0,
+                        "cc_status":          "pending",
+                        "current_price":      None,
+                        "last_checked":       datetime.now().isoformat(),
+                    })
+                    known_tickers.add(sym)
+
+        if not holdings:
+            log.info("📭 No wheel holdings — nothing to do")
+        else:
+            # Screener candidates (Steps 1 & 2 prerequisite)
+            log.info("\n📡 Fetching screener candidates...")
+            candidate_info = get_all_candidates()
+            if candidate_info:
+                log.info(f"  ✅ {len(candidate_info)} ticker(s) pass screener filters")
+            else:
+                log.warning("  ⚠️  Screener returned 0 tickers — API may be down")
+                log.warning("  Skipping screener/earnings checks; will attempt CCs for all holdings")
+
         for h in holdings:
             ticker          = h["ticker"]
             shares          = h.get("shares", 0)
@@ -606,14 +628,22 @@ def run_wheel_check() -> tuple[float, list]:
         ib.disconnect()
 
     # ── Step 5: Persist to state.json ────────────────────────
+    reserved_capital   = round(sum(
+        h.get("shares", 0) * h.get("assigned_strike", 0.0)
+        for h in holdings if h.get("shares", 0) > 0
+    ), 2)
+    active_wheel_count = sum(1 for h in holdings if h.get("shares", 0) > 0)
+
     state["wheel_holdings"] = holdings
     state["monday_context"] = {
-        "skip_tickers":    skip_tickers,
-        "freed_capital":   freed_capital,
-        "cc_premium":      cc_premium,
-        "shares_sold_pnl": shares_sold_pnl,
-        "wheel_activity":  wheel_activity,
-        "updated":         datetime.now().isoformat()
+        "skip_tickers":       skip_tickers,
+        "freed_capital":      freed_capital,
+        "cc_premium":         cc_premium,
+        "shares_sold_pnl":    shares_sold_pnl,
+        "wheel_activity":     wheel_activity,
+        "reserved_capital":   reserved_capital,
+        "active_wheel_count": active_wheel_count,
+        "updated":            datetime.now().isoformat()
     }
     _save_state(state)
 
@@ -637,9 +667,11 @@ def run_wheel_check() -> tuple[float, list]:
     log.info(f"   Freed capital:    ${freed_capital:,.0f}")
     log.info(f"   Shares sold P&L:  ${shares_sold_pnl:,.0f}")
     log.info(f"   CC premium:       ${cc_premium:,.0f}")
+    log.info(f"   Reserved capital: ${reserved_capital:,.0f}")
+    log.info(f"   Active holdings:  {active_wheel_count}")
     log.info("=" * 65)
 
-    return freed_capital, skip_tickers
+    return freed_capital, skip_tickers, reserved_capital
 
 
 if __name__ == "__main__":
