@@ -127,17 +127,19 @@ else
     [ -n "$NON_EXEC" ] && fail "Non-executable scripts in ~/IBC/:$(echo "$NON_EXEC" | sed 's/^/ /')"
 fi
 
-# Check executability of scripts/ subdirectory
+# Check executability of scripts/ subdirectory (.sh files only)
 if [ -d "$IBC_DIR/scripts" ]; then
     echo ""
     echo "  IBC script permissions (~/IBC/scripts/):"
     ls -la "$IBC_DIR/scripts/" 2>/dev/null | sed 's/^/    /'
-    NON_EXEC_SUB=$(find "$IBC_DIR/scripts" -maxdepth 1 -type f ! -perm -u+x 2>/dev/null)
+    NON_EXEC_SUB=$(find "$IBC_DIR/scripts" -maxdepth 1 -name "*.sh" ! -perm -u+x 2>/dev/null)
     if [ -z "$NON_EXEC_SUB" ]; then
-        ok "All ~/IBC/scripts/* files are executable"
+        ok "All ~/IBC/scripts/*.sh files are executable"
     else
-        fail "Non-executable files in ~/IBC/scripts/:$(echo "$NON_EXEC_SUB" | sed 's/^/ /')"
+        fail "Non-executable .sh files in ~/IBC/scripts/:$(echo "$NON_EXEC_SUB" | sed 's/^/ /')"
     fi
+    printf "  ${BLUE}ℹ️${NC}   'no execute permission' errors on non-.sh files (e.g. README.txt) are\n"
+    printf "       cosmetic on some IBC versions and do not prevent IBC from running.\n"
 else
     warn "~/IBC/scripts/ directory not found"
 fi
