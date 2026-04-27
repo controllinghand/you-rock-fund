@@ -118,12 +118,83 @@ export default function ThisWeek() {
       {/* Results */}
       {screener && !loading && (
         <>
+          {/* Capital allocation (shown when wheel holdings are active) */}
+          {(screener.active_wheel_count ?? 0) > 0 && (
+            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+              <div className="text-gray-900 dark:text-white font-semibold text-sm mb-3">Capital Allocation</div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Fund Budget</span>
+                  <span className="text-gray-900 dark:text-white font-mono">${(screener.total_budget ?? 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-red-400">
+                  <span>
+                    Reserved ({screener.active_wheel_count} wheel holding{screener.active_wheel_count !== 1 ? 's' : ''})
+                    {(screener.wheel_holdings ?? []).filter(h => h.shares > 0).map(h => ` · ${h.ticker}`).join('')}
+                  </span>
+                  <span className="font-mono">− ${(screener.reserved_capital ?? 0).toLocaleString()}</span>
+                </div>
+                <div className="border-t border-gray-200 dark:border-gray-800 pt-2 flex justify-between font-semibold">
+                  <span className="text-gray-900 dark:text-white">Available for CSPs</span>
+                  <span className="text-green-400 font-mono">${(screener.budget ?? 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-xs text-gray-500 dark:text-gray-600 pt-0.5">
+                  <span>CSP positions this week</span>
+                  <span>{positions.length} of {(screener.active_wheel_count ?? 0) + positions.length} total slots</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Wheel holdings table */}
+          {(screener.wheel_holdings ?? []).some(h => h.shares > 0) && (
+            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center gap-2">
+                <div className="text-gray-900 dark:text-white font-semibold text-sm">🔄 Wheel Holdings</div>
+                <span className="text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 px-2 py-0.5 rounded-full">
+                  {screener.wheel_holdings.filter(h => h.shares > 0).length}
+                </span>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-500 text-xs border-b border-gray-200 dark:border-gray-800">
+                    {['Ticker', 'Shares', 'Assigned @', 'Capital Tied', 'CC Status', 'CC Strike', 'Expiry'].map(h => (
+                      <th key={h} className={`${h === 'Ticker' ? 'text-left' : 'text-right'} px-4 py-3`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {screener.wheel_holdings.filter(h => h.shares > 0).map(h => {
+                    const capitalTied = h.shares * (h.assigned_strike ?? 0)
+                    return (
+                      <tr key={h.ticker} className="border-b border-gray-100 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
+                        <td className="px-4 py-3 text-gray-900 dark:text-white font-semibold">{h.ticker}</td>
+                        <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-300">{h.shares}</td>
+                        <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-300">${h.assigned_strike}</td>
+                        <td className="px-4 py-3 text-right text-red-400 font-medium font-mono">${capitalTied.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${
+                            h.cc_status === 'open'    ? 'bg-green-900/40 text-green-400 border-green-800'
+                            : h.cc_status === 'pending' ? 'bg-yellow-900/40 text-yellow-400 border-yellow-800'
+                            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700'
+                          }`}>{h.cc_status ?? '—'}</span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-gray-600 dark:text-gray-400">{h.current_cc_strike ? `$${h.current_cc_strike}` : '—'}</td>
+                        <td className="px-4 py-3 text-right text-gray-600 dark:text-gray-400 text-xs">{h.current_cc_expiry ?? '—'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* Summary cards */}
           <div className="grid grid-cols-3 gap-4">
             {[
-              { label: 'Positions',     value: positions.length },
-              { label: 'Total Premium', value: `$${(screener.total_premium ?? 0).toLocaleString()}`, accent: 'text-green-400' },
-              { label: 'Blended Yield', value: `${(screener.blended_yield ?? 0).toFixed(2)}%`,      accent: 'text-blue-400' },
+              { label: 'CSP Positions',  value: positions.length },
+              { label: 'Total Premium',  value: `$${(screener.total_premium ?? 0).toLocaleString()}`, accent: 'text-green-400' },
+              { label: 'Blended Yield',  value: `${(screener.blended_yield ?? 0).toFixed(2)}%`,      accent: 'text-blue-400' },
             ].map(({ label, value, accent = 'text-gray-900 dark:text-white' }) => (
               <div key={label} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
                 <div className="text-gray-500 text-xs mb-2">{label}</div>
@@ -132,11 +203,11 @@ export default function ThisWeek() {
             ))}
           </div>
 
-          {/* Targets table */}
+          {/* CSP targets table */}
           {positions.length > 0 ? (
             <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
               <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-                <div className="text-gray-900 dark:text-white font-semibold text-sm">Top {positions.length} Targets</div>
+                <div className="text-gray-900 dark:text-white font-semibold text-sm">CSP Targets</div>
                 <div className="text-gray-500 dark:text-gray-600 text-xs">Budget: ${(screener.budget ?? 0).toLocaleString()}</div>
               </div>
               <table className="w-full text-sm">

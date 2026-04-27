@@ -179,57 +179,78 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Wheel holdings — shown before failed/skipped */}
+      {(positions?.wheel_holdings?.filter(h => h.shares > 0).length ?? 0) > 0 && (
+        <div>
+          <div className="flex items-center gap-3 mb-3">
+            <h2 className="text-gray-900 dark:text-white font-semibold">🔄 Wheel Holdings</h2>
+            <span className="text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 px-2 py-0.5 rounded-full">
+              {positions.wheel_holdings.filter(h => h.shares > 0).length}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {positions.wheel_holdings.filter(h => h.shares > 0).map(h => {
+              const upnl = h.current_price != null
+                ? (h.current_price - h.assigned_strike) * h.shares
+                : null
+              return (
+                <div key={h.ticker} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <div className="text-xl font-bold text-gray-900 dark:text-white">{h.ticker}</div>
+                      <div className="text-gray-500 text-sm">
+                        {h.shares} shares @ ${h.assigned_strike} assigned
+                        {h.current_price != null && (
+                          <span className="ml-2 text-gray-400 dark:text-gray-600">· now ${h.current_price}</span>
+                        )}
+                      </div>
+                    </div>
+                    <span className={`text-xs px-2.5 py-1 rounded-full border font-medium capitalize ${
+                      h.cc_status === 'open'
+                        ? 'bg-green-900/40 text-green-400 border-green-800'
+                        : h.cc_status === 'pending'
+                        ? 'bg-yellow-900/40 text-yellow-400 border-yellow-800'
+                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700'
+                    }`}>
+                      CC: {h.cc_status ?? '—'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 text-sm">
+                    {[
+                      { label: 'CC Strike',       value: h.current_cc_strike ? `$${h.current_cc_strike}` : '—' },
+                      { label: 'CC Premium',      value: h.current_cc_premium ? `$${h.current_cc_premium.toLocaleString()}` : '—', accent: 'text-green-400' },
+                      { label: 'CC Expiry',       value: h.current_cc_expiry ?? '—' },
+                      {
+                        label: 'Unrealized P&L',
+                        value: upnl != null
+                          ? `${upnl >= 0 ? '+' : ''}$${Math.round(Math.abs(upnl)).toLocaleString()}`
+                          : '—',
+                        accent: upnl == null ? 'text-gray-900 dark:text-white'
+                               : upnl >= 0   ? 'text-green-400'
+                               :               'text-red-400',
+                      },
+                      { label: 'Stop Loss',       value: h.assigned_strike ? `$${(h.assigned_strike * 0.9).toFixed(2)}` : '—', accent: 'text-red-400' },
+                      { label: 'Week #',          value: h.weeks_held ?? 1 },
+                    ].map(({ label, value, accent = 'text-gray-900 dark:text-white' }) => (
+                      <div key={label}>
+                        <div className="text-gray-500 dark:text-gray-600 text-xs mb-0.5">{label}</div>
+                        <div className={`font-semibold ${accent}`}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Failed/skipped */}
       {failedPositions.length > 0 && (
         <div>
           <h2 className="text-gray-500 font-semibold text-sm mb-3">Failed / Skipped</h2>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {failedPositions.map(p => <PositionCard key={p.ticker} position={p} />)}
-          </div>
-        </div>
-      )}
-
-      {/* Wheel holdings */}
-      {(positions?.wheel_holdings?.length ?? 0) > 0 && (
-        <div>
-          <h2 className="text-gray-900 dark:text-white font-semibold mb-3">Wheel Holdings</h2>
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {positions.wheel_holdings.map(h => (
-              <div key={h.ticker} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <div className="text-xl font-bold text-gray-900 dark:text-white">{h.ticker}</div>
-                    <div className="text-gray-500 text-sm">
-                      {h.shares} shares assigned @ ${h.assigned_strike}
-                    </div>
-                  </div>
-                  <span className={`text-xs px-2.5 py-1 rounded-full border font-medium capitalize ${
-                    h.cc_status === 'open'
-                      ? 'bg-green-900/40 text-green-400 border-green-800'
-                      : h.cc_status === 'pending'
-                      ? 'bg-yellow-900/40 text-yellow-400 border-yellow-800'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700'
-                  }`}>
-                    CC: {h.cc_status ?? '—'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-3 text-sm">
-                  {[
-                    { label: 'CC Strike',  value: h.current_cc_strike ? `$${h.current_cc_strike}` : '—' },
-                    { label: 'CC Premium', value: `$${(h.current_cc_premium ?? 0).toLocaleString()}`, accent: 'text-green-400' },
-                    { label: 'Expiry',     value: h.current_cc_expiry ?? '—' },
-                    { label: 'Week #',     value: h.weeks_held ?? 1 },
-                    { label: 'Stop Loss',  value: h.assigned_strike ? `$${(h.assigned_strike * 0.9).toFixed(2)}` : '—', accent: 'text-red-400' },
-                    { label: 'Last Check', value: h.last_checked ? new Date(h.last_checked).toLocaleDateString() : '—' },
-                  ].map(({ label, value, accent = 'text-gray-900 dark:text-white' }) => (
-                    <div key={label}>
-                      <div className="text-gray-500 dark:text-gray-600 text-xs mb-0.5">{label}</div>
-                      <div className={`font-semibold ${accent}`}>{value}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       )}

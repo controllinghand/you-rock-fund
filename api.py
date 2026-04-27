@@ -240,6 +240,10 @@ def get_status():
     settings = load_settings()
     ibkr = _get_ibkr_data(settings)
     port = settings.get("ibkr_port", 4002)
+    state = load_state()
+    wheel_count = sum(
+        1 for h in state.get("wheel_holdings", []) if h.get("shares", 0) > 0
+    )
     return {
         "gateway_running": _gateway_running(port),
         "scheduler_pid":   _scheduler_pid(),
@@ -251,6 +255,7 @@ def get_status():
         "next_execution":  _next_execution(),
         "trading_mode":    settings.get("trading_mode", "paper"),
         "execution_time":  settings.get("execution_time", "10:00"),
+        "wheel_count":     wheel_count,
     }
 
 @app.get("/api/positions")
@@ -275,6 +280,7 @@ def get_positions():
 
     return {
         "positions":      enriched,
+        "csp_positions":  enriched,
         "wheel_holdings": state.get("wheel_holdings", []),
         "weekly_pnl":     state.get("weekly_pnl", {}),
         "run_date":       state.get("run_date"),
@@ -318,23 +324,38 @@ def run_screener():
         from screener import get_top_targets
         from position_sizer import size_all
 
-        n = settings.get("num_positions", 5)
+        n      = settings.get("num_positions", 5)
         budget = settings.get("fund_budget", 250_000)
 
-        targets = get_top_targets(n * 2)
-        positions = size_all(targets, budget=budget)  # pass all candidates so sizer can skip and fall through
+        # Deduct capital reserved for active wheel holdings
+        state          = load_state()
+        wheel_holdings = state.get("wheel_holdings", [])
+        active_holdings = [h for h in wheel_holdings if h.get("shares", 0) > 0]
+        reserved_capital   = round(sum(
+            h["shares"] * h.get("assigned_strike", 0.0) for h in active_holdings
+        ), 2)
+        active_wheel_count = len(active_holdings)
+        adjusted_budget    = budget - reserved_capital
+        target_fills       = max(1, n - active_wheel_count)
+
+        targets   = get_top_targets(n * 2)
+        positions = size_all(targets, budget=adjusted_budget, num_positions=target_fills)
 
         total_premium = sum(p.get("premium_total", 0) for p in positions)
         total_capital = sum(p.get("capital_used", 0) for p in positions)
 
         return {
-            "positions":     positions,
-            "raw_targets":   targets,
-            "total_premium": total_premium,
-            "total_capital": total_capital,
-            "blended_yield": round(total_premium / total_capital * 100 if total_capital else 0, 3),
-            "budget":        budget,
-            "run_at":        datetime.now(PST).isoformat(),
+            "positions":          positions,
+            "raw_targets":        targets,
+            "total_premium":      total_premium,
+            "total_capital":      total_capital,
+            "blended_yield":      round(total_premium / total_capital * 100 if total_capital else 0, 3),
+            "budget":             adjusted_budget,
+            "total_budget":       budget,
+            "reserved_capital":   reserved_capital,
+            "active_wheel_count": active_wheel_count,
+            "wheel_holdings":     wheel_holdings,
+            "run_at":             datetime.now(PST).isoformat(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
