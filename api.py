@@ -89,6 +89,30 @@ def load_ytd() -> dict:
 _ibkr_cache: dict = {"data": None, "ts": 0.0}
 IBKR_CACHE_TTL = 30.0
 
+_ACCT_TAGS = (
+    "NetLiquidation,SettledCash,UnrealizedPnL,"
+    "RealizedPnL,MaintenanceMargin,ExcessLiquidity,BuyingPower"
+)
+_TAG_KEY = {
+    "NetLiquidation":   "account_value",
+    "BuyingPower":      "buying_power",
+    "SettledCash":      "settled_cash",
+    "UnrealizedPnL":    "unrealized_pnl",
+    "RealizedPnL":      "realized_pnl",
+    "MaintenanceMargin":"maintenance_margin",
+    "ExcessLiquidity":  "excess_liquidity",
+}
+
+def _safe_float(val, ndigits: int = 2):
+    """Convert IBKR values to float, returning None for NaN / sentinel values."""
+    try:
+        f = float(val)
+        if f != f or abs(f) > 1e15:   # NaN or IBKR's 1e308 "unavailable" sentinel
+            return None
+        return round(f, ndigits)
+    except (TypeError, ValueError):
+        return None
+
 def _live_ready() -> dict:
     missing = []
     for var, placeholder in LIVE_PLACEHOLDERS.items():
@@ -153,8 +177,19 @@ def _get_ibkr_data(settings: dict) -> dict:
     if _ibkr_cache["data"] and (now - _ibkr_cache["ts"]) < IBKR_CACHE_TTL:
         return _ibkr_cache["data"]
 
-    result = {"connected": False, "account_value": None, "buying_power": None, "account": None,
-              "error": None}
+    result = {
+        "connected":          False,
+        "account_value":      None,   # NetLiquidation
+        "buying_power":       None,
+        "settled_cash":       None,
+        "unrealized_pnl":     None,
+        "realized_pnl":       None,
+        "maintenance_margin": None,
+        "excess_liquidity":   None,
+        "account":            None,
+        "portfolio":          [],
+        "error":              None,
+    }
     port = settings.get("ibkr_port", 4002)
     host = os.environ.get("IBKR_HOST", "127.0.0.1")
     account_env = settings.get("account") or os.environ.get("ACCOUNT", "")
@@ -177,14 +212,45 @@ def _get_ibkr_data(settings: dict) -> dict:
         print(f"[api] IBKR connected — accounts: {accts}")
         if acct:
             result["account"] = acct
+
+            # Account summary (NetLiq, BuyingPower, Cash, PnL, Margin …)
             for item in ib.accountSummary(acct):
-                if item.currency == "USD":
-                    if item.tag == "NetLiquidation":
-                        result["account_value"] = round(float(item.value), 2)
-                    elif item.tag == "BuyingPower":
-                        result["buying_power"] = round(float(item.value), 2)
+                if item.currency != "USD":
+                    continue
+                key = _TAG_KEY.get(item.tag)
+                if key:
+                    result[key] = _safe_float(item.value)
+
+            # Portfolio items with live market prices
+            ib.reqAccountUpdates(subscribe=True, acctCode=acct)
+            ib.sleep(2)   # allow updatePortfolio events to populate the cache
+            raw_portfolio = ib.portfolio(acct)
+
+            portfolio = []
+            for item in raw_portfolio:
+                c = item.contract
+                is_opt = c.secType == "OPT"
+                portfolio.append({
+                    "symbol":       c.symbol,
+                    "secType":      c.secType,
+                    "right":        c.right if is_opt else None,
+                    "strike":       _safe_float(c.strike, 4) if is_opt else None,
+                    "expiry":       c.lastTradeDateOrContractMonth if is_opt else None,
+                    "position":     _safe_float(item.position, 0),
+                    "avgCost":      _safe_float(item.averageCost, 4),
+                    "marketPrice":  _safe_float(item.marketPrice, 4),
+                    "marketValue":  _safe_float(item.marketValue, 2),
+                    "unrealizedPNL":_safe_float(item.unrealizedPNL, 2),
+                    "realizedPNL":  _safe_float(item.realizedPNL, 2),
+                })
+
+            # Sort: stocks first, then options; alphabetical within each group
+            portfolio.sort(key=lambda x: (0 if x["secType"] == "STK" else 1, x["symbol"]))
+            result["portfolio"] = portfolio
             result["connected"] = True
-        print(f"[api] IBKR account_value={result['account_value']} buying_power={result['buying_power']}")
+        print(f"[api] IBKR net_liq={result['account_value']} "
+              f"unrealized_pnl={result['unrealized_pnl']} "
+              f"portfolio_items={len(result['portfolio'])}")
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
         print(f"[api] IBKR connection failed — {msg}")
@@ -245,17 +311,19 @@ def get_status():
         1 for h in state.get("wheel_holdings", []) if h.get("shares", 0) > 0
     )
     return {
-        "gateway_running": _gateway_running(port),
-        "scheduler_pid":   _scheduler_pid(),
-        "ibkr_connected":  ibkr["connected"],
-        "ibkr_error":      ibkr.get("error"),
-        "account_value":   ibkr["account_value"],
-        "buying_power":    ibkr["buying_power"],
-        "account":         ibkr["account"],
-        "next_execution":  _next_execution(),
-        "trading_mode":    settings.get("trading_mode", "paper"),
-        "execution_time":  settings.get("execution_time", "10:00"),
-        "wheel_count":     wheel_count,
+        "gateway_running":    _gateway_running(port),
+        "scheduler_pid":      _scheduler_pid(),
+        "ibkr_connected":     ibkr["connected"],
+        "ibkr_error":         ibkr.get("error"),
+        "account_value":      ibkr["account_value"],
+        "buying_power":       ibkr["buying_power"],
+        "unrealized_pnl":     ibkr.get("unrealized_pnl"),
+        "net_liquidation":    ibkr.get("account_value"),
+        "account":            ibkr["account"],
+        "next_execution":     _next_execution(),
+        "trading_mode":       settings.get("trading_mode", "paper"),
+        "execution_time":     settings.get("execution_time", "10:00"),
+        "wheel_count":        wheel_count,
     }
 
 @app.get("/api/positions")
@@ -278,6 +346,10 @@ def get_positions():
             "exec_timestamp":    ex.get("timestamp"),
         })
 
+    settings = load_settings()
+    ibkr = _get_ibkr_data(settings)
+    acct = ibkr.get("account_value")
+
     return {
         "positions":      enriched,
         "csp_positions":  enriched,
@@ -285,6 +357,16 @@ def get_positions():
         "weekly_pnl":     state.get("weekly_pnl", {}),
         "run_date":       state.get("run_date"),
         "monday_context": state.get("monday_context", {}),
+        "portfolio":      ibkr.get("portfolio", []),
+        "account_summary": {
+            "net_liquidation":    acct,
+            "settled_cash":       ibkr.get("settled_cash"),
+            "unrealized_pnl":     ibkr.get("unrealized_pnl"),
+            "realized_pnl":       ibkr.get("realized_pnl"),
+            "maintenance_margin": ibkr.get("maintenance_margin"),
+            "excess_liquidity":   ibkr.get("excess_liquidity"),
+            "buying_power":       ibkr.get("buying_power"),
+        } if ibkr.get("connected") else None,
     }
 
 @app.get("/api/performance")

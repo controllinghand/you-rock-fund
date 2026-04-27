@@ -71,6 +71,14 @@ export default function StatusBar() {
       <div className="flex items-center gap-4 text-xs">
         <span className="text-gray-500">Account</span>
         <span className="text-gray-900 dark:text-white font-medium font-mono">{fmt(status?.account_value)}</span>
+        {status?.unrealized_pnl != null && (
+          <>
+            <span className="text-gray-500">Unrealized</span>
+            <span className={`font-medium font-mono ${status.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {status.unrealized_pnl >= 0 ? '+' : '−'}${Math.round(Math.abs(status.unrealized_pnl)).toLocaleString()}
+            </span>
+          </>
+        )}
         <span className="text-gray-500">Buying Power</span>
         <span className="text-gray-900 dark:text-white font-medium font-mono">{fmt(status?.buying_power)}</span>
         {(status?.wheel_count ?? 0) > 0 && (

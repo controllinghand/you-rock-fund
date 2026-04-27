@@ -34,6 +34,38 @@ function StatCard({ label, value, sub, accent = 'text-gray-900 dark:text-white' 
   )
 }
 
+// ── Portfolio helpers ─────────────────────────────────────────
+
+function fmtExpiry(yyyymmdd) {
+  if (!yyyymmdd || yyyymmdd.length < 8) return yyyymmdd || '—'
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const m = parseInt(yyyymmdd.slice(4, 6), 10) - 1
+  const d = yyyymmdd.slice(6, 8)
+  return `${months[m]}${d}`
+}
+
+function fmtInstrument(item) {
+  if (item.secType !== 'OPT') return `${item.symbol} Stock`
+  return `${item.symbol} ${fmtExpiry(item.expiry)} ${item.strike}${item.right}`
+}
+
+function fmtPnl(n) {
+  if (n == null) return '—'
+  const sign = n >= 0 ? '+' : '−'
+  return `${sign}$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function pnlColor(n) {
+  if (n == null) return 'text-gray-500'
+  return n >= 0 ? 'text-green-400' : 'text-red-400'
+}
+
+function fmtMktVal(n) {
+  if (n == null) return '—'
+  const abs = Math.round(Math.abs(n)).toLocaleString()
+  return n < 0 ? `-$${abs}` : `$${abs}`
+}
+
 export default function Dashboard() {
   const [positions, setPositions]     = useState(null)
   const [status, setStatus]           = useState(null)
@@ -122,6 +154,71 @@ export default function Dashboard() {
           <RefreshCw size={16} />
         </button>
       </div>
+
+      {/* Live Portfolio */}
+      {positions?.account_summary && (
+        <div className="space-y-4">
+          {/* Account summary cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+            {[
+              { label: '💰 Net Liq',      value: positions.account_summary.net_liquidation },
+              { label: '💵 Cash',          value: positions.account_summary.settled_cash },
+              { label: '📈 Unrealized',    value: positions.account_summary.unrealized_pnl,   pnl: true },
+              { label: '✅ Realized',      value: positions.account_summary.realized_pnl,     pnl: true },
+              { label: '🛡️ Margin',        value: positions.account_summary.maintenance_margin },
+              { label: '⚡ Buying Power',  value: positions.account_summary.buying_power },
+            ].map(({ label, value, pnl }) => (
+              <div key={label} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+                <div className="text-gray-500 text-xs mb-1.5">{label}</div>
+                <div className={`text-lg font-bold font-mono ${pnl ? pnlColor(value) : 'text-gray-900 dark:text-white'}`}>
+                  {pnl ? fmtPnl(value) : (value != null ? `$${Math.round(value).toLocaleString()}` : '—')}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Live holdings table */}
+          {(positions.portfolio?.length ?? 0) > 0 && (
+            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center gap-2">
+                <div className="text-gray-900 dark:text-white font-semibold text-sm">IBKR Holdings</div>
+                <span className="text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 px-2 py-0.5 rounded-full">
+                  {positions.portfolio.length}
+                </span>
+                <span className="text-gray-400 dark:text-gray-600 text-xs ml-auto">live market prices</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-500 text-xs border-b border-gray-200 dark:border-gray-800">
+                    {['Instrument', 'Position', 'Market Value', 'Avg Price', 'Unrealized P&L'].map(h => (
+                      <th key={h} className={`${h === 'Instrument' ? 'text-left' : 'text-right'} px-4 py-3`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.portfolio.map((item, i) => (
+                    <tr key={i} className="border-b border-gray-100 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
+                      <td className="px-4 py-3 text-gray-900 dark:text-white font-medium">{fmtInstrument(item)}</td>
+                      <td className={`px-4 py-3 text-right font-mono font-semibold ${item.position > 0 ? 'text-green-400' : item.position < 0 ? 'text-orange-400' : 'text-gray-500'}`}>
+                        {item.position > 0 ? `+${item.position}` : item.position}
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-300 font-mono">
+                        {fmtMktVal(item.marketValue)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-600 dark:text-gray-400 font-mono">
+                        {item.avgCost != null ? `$${item.avgCost.toFixed(2)}` : '—'}
+                      </td>
+                      <td className={`px-4 py-3 text-right font-mono font-semibold ${pnlColor(item.unrealizedPNL)}`}>
+                        {fmtPnl(item.unrealizedPNL)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* This week P&L */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
