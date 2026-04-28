@@ -239,10 +239,28 @@ def _get_ibkr_data(settings: dict) -> dict:
                 raw_positions = ib.positions()
                 print(f"[api] reqPositions returned {len(raw_positions)} items")
 
+                # ── Portfolio data for market prices / P&L
+                portfolio_lookup: dict = {}
+                try:
+                    ib.reqAccountUpdates(True, acct)
+                    ib.sleep(3)
+                    portfolio_items = ib.portfolio()
+                    ib.reqAccountUpdates(False, acct)
+                    for item in portfolio_items:
+                        portfolio_lookup[item.contract.conId] = {
+                            "marketPrice":   _safe_float(item.marketPrice),
+                            "marketValue":   _safe_float(item.marketValue),
+                            "unrealizedPNL": _safe_float(item.unrealizedPNL),
+                        }
+                    print(f"[api] portfolio() returned {len(portfolio_items)} items with market data")
+                except Exception as pnl_err:
+                    print(f"[api] reqAccountUpdates failed (positions show without P&L): {pnl_err}")
+
                 portfolio = []
                 for pos in raw_positions:
-                    c      = pos.contract
-                    is_opt = c.secType == "OPT"
+                    c        = pos.contract
+                    is_opt   = c.secType == "OPT"
+                    pnl_data = portfolio_lookup.get(c.conId, {})
                     portfolio.append({
                         "symbol":        c.symbol,
                         "secType":       c.secType,
@@ -251,9 +269,9 @@ def _get_ibkr_data(settings: dict) -> dict:
                         "expiry":        c.lastTradeDateOrContractMonth if is_opt else None,
                         "position":      _safe_float(pos.position, 0),
                         "avgCost":       _safe_float(pos.avgCost, 4),
-                        "marketPrice":   None,
-                        "marketValue":   None,
-                        "unrealizedPNL": None,
+                        "marketPrice":   pnl_data.get("marketPrice"),
+                        "marketValue":   pnl_data.get("marketValue"),
+                        "unrealizedPNL": pnl_data.get("unrealizedPNL"),
                     })
                 portfolio.sort(key=lambda x: (0 if x["secType"] == "STK" else 1, x["symbol"]))
                 result["portfolio"] = portfolio
