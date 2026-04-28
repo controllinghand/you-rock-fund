@@ -6,6 +6,7 @@ python-dotenv
 numpy
 python-dateutil
 tzlocal
+tzdata
 nest_asyncio
 fastapi
 uvicorn[standard]
