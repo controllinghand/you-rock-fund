@@ -1,0 +1,16 @@
+# Optional local override examples.
+# Copy to docker-compose.override.yml if you want bind-mounted runtime data instead
+# of the named yrvi_data volume, or if Rancher Desktop needs a local path.
+
+services:
+  api:
+    volumes:
+      - ./docker/data:/data
+
+  scheduler:
+    volumes:
+      - ./docker/data:/data
+
+  ib_gateway:
+    volumes:
+      - ./docker/data/ib_gateway_settings:/home/ibgateway/Jts

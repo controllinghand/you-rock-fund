@@ -1,0 +1,118 @@
+name: yrvi
+
+x-python-env: &python-env
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  YRVI_CONTAINERIZED: "1"
+  YRVI_DATA_DIR: /data
+  YRVI_INIT_DRY_RUN: ${YRVI_INIT_DRY_RUN:-true}
+  TRADING_MODE: ${TRADING_MODE:-paper}
+  IBKR_HOST: ib_gateway
+  # gnzsnz/ib-gateway exposes paper on 4004 and live on 4003 inside the Docker network.
+  IBKR_PORT: ${IBKR_PORT:-4004}
+  IBKR_CLIENT_ID: ${IBKR_CLIENT_ID:-1}
+  ACCOUNT: ${ACCOUNT_PAPER:?Set ACCOUNT_PAPER in .env.compose or your shell}
+  RENDER_URL: ${RENDER_URL:-https://yourockclub-ledger-sync.onrender.com/api/targets/csp}
+
+x-python-secrets: &python-secrets
+  - render_secret
+  - anthropic_api_key
+  - discord_webhook_url
+  - discord_webhook_weekly_plan
+  - ibkr_password_live
+
+services:
+  ib_gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:${IB_GATEWAY_TAG:-latest}
+    container_name: ib_gateway
+    restart: unless-stopped
+    environment:
+      # This stack currently starts the paper Gateway only.
+      TWS_USERID: ${TWS_USERID_PAPER:?Set TWS_USERID_PAPER in .env.compose or your shell}
+      TWS_PASSWORD_FILE: /run/secrets/tws_password_paper
+      TRADING_MODE: ${TRADING_MODE:-paper}
+      TWS_ACCEPT_INCOMING: ${TWS_ACCEPT_INCOMING:-accept}
+      READ_ONLY_API: ${READ_ONLY_API:-no}
+      TIME_ZONE: ${TIME_ZONE:-America/Los_Angeles}
+      TZ: ${TIME_ZONE:-America/Los_Angeles}
+      VNC_SERVER_PASSWORD: ${VNC_SERVER_PASSWORD:-}
+      TWOFA_TIMEOUT_ACTION: ${TWOFA_TIMEOUT_ACTION:-exit}
+      RELOGIN_AFTER_TWOFA_TIMEOUT: ${RELOGIN_AFTER_TWOFA_TIMEOUT:-no}
+      TWOFA_EXIT_INTERVAL: ${TWOFA_EXIT_INTERVAL:-60}
+      EXISTING_SESSION_DETECTED_ACTION: ${EXISTING_SESSION_DETECTED_ACTION:-primary}
+      ALLOW_BLIND_TRADING: ${ALLOW_BLIND_TRADING:-no}
+      AUTO_RESTART_TIME: ${AUTO_RESTART_TIME:-11:59 PM}
+      TWS_SETTINGS_PATH: /home/ibgateway/Jts
+    secrets:
+      - tws_password_paper
+    volumes:
+      - ib_gateway_settings:/home/ibgateway/Jts
+    ports:
+      - "127.0.0.1:${IB_GATEWAY_LIVE_PORT:-4001}:4003"
+      - "127.0.0.1:${IB_GATEWAY_PAPER_PORT:-4002}:4004"
+      - "127.0.0.1:${IB_GATEWAY_VNC_PORT:-5900}:5900"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: yrvi-api:local
+    restart: unless-stopped
+    depends_on:
+      - ib_gateway
+    environment:
+      <<: *python-env
+      ACCOUNT_LIVE: ${ACCOUNT_LIVE:-}
+      IBKR_USERNAME_LIVE: ${IBKR_USERNAME_LIVE:-}
+    secrets: *python-secrets
+    volumes:
+      - yrvi_data:/data
+    ports:
+      - "127.0.0.1:${YRVI_API_PORT:-8000}:8000"
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.scheduler
+    image: yrvi-scheduler:local
+    restart: unless-stopped
+    depends_on:
+      - ib_gateway
+    environment:
+      <<: *python-env
+      ACCOUNT_LIVE: ${ACCOUNT_LIVE:-}
+      IBKR_USERNAME_LIVE: ${IBKR_USERNAME_LIVE:-}
+    secrets: *python-secrets
+    volumes:
+      - yrvi_data:/data
+
+  web:
+    build:
+      context: .
+      dockerfile: yrvi-app/Dockerfile
+    image: yrvi-web:local
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:${YRVI_WEB_PORT:-3000}:80"
+
+secrets:
+  tws_password_paper:
+    file: ${YRVI_SECRETS_DIR:-./docker/secrets}/tws_password_paper
+  tws_password_live:
+    file: ${YRVI_SECRETS_DIR:-./docker/secrets}/tws_password_live
+  render_secret:
+    file: ${YRVI_SECRETS_DIR:-./docker/secrets}/render_secret
+  anthropic_api_key:
+    file: ${YRVI_SECRETS_DIR:-./docker/secrets}/anthropic_api_key
+  discord_webhook_url:
+    file: ${YRVI_SECRETS_DIR:-./docker/secrets}/discord_webhook_url
+  discord_webhook_weekly_plan:
+    file: ${YRVI_SECRETS_DIR:-./docker/secrets}/discord_webhook_weekly_plan
+  ibkr_password_live:
+    file: ${YRVI_SECRETS_DIR:-./docker/secrets}/ibkr_password_live
+
+volumes:
+  ib_gateway_settings:
+  yrvi_data:
