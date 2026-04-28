@@ -111,9 +111,11 @@ Fund parameters (capital, position targets, schedule) are constants in `config.p
 
 ## IB Gateway Auto-Login (Mac Mini)
 
+> **Containerized branch:** Docker replaces launchd on this branch. Use `bash setup_docker.sh` instead of `setup_ibc.sh`. See [CONTAINERIZATION.md](CONTAINERIZATION.md) for the full setup guide.
+
 IB Gateway is managed by IBC and launchd — it starts automatically at login and re-authenticates without manual intervention.
 
-**One-time setup (run once per machine):**
+**One-time setup (run once per machine — non-containerized only):**
 ```bash
 bash setup_ibc.sh
 ```

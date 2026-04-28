@@ -1,27 +1,14 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────
-#  YRVI Trading System — Startup & Pre-flight Check
-#  Run after any reboot, or double-click "YRVI Startup" on Desktop
+#  YRVI Trading System — Docker Startup & Pre-flight Check
+#  Containerized branch: Docker manages all services.
+#  Docker replaces launchd — do not use setup_ibc.sh on this branch.
+#
+#  Run after any reboot, or to verify the stack is healthy.
 # ─────────────────────────────────────────────────────────────
 
 PROJ=$(cd "$(dirname "$0")" && pwd)
-PYTHON="$PROJ/venv/bin/python3"
-NODE="$(command -v node 2>/dev/null)"
-NPM="$(command -v npm 2>/dev/null)"
-PLIST_SRC="$PROJ/com.yourockfund.scheduler.plist"
-PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.scheduler.plist"
-LABEL="com.yourockfund.scheduler"
-GW_LABEL="com.yourockfund.ibgateway"
-IBC_LOG="$HOME/IBC/Logs/ibgateway_stderr.log"
-API_PLIST_SRC="$PROJ/com.yourockfund.api.plist"
-API_PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.api.plist"
-API_LABEL="com.yourockfund.api"
-DASH_PLIST_SRC="$PROJ/com.yourockfund.dashboard.plist"
-DASH_PLIST_DEST="$HOME/Library/LaunchAgents/com.yourockfund.dashboard.plist"
-DASH_LABEL="com.yourockfund.dashboard"
-NPM_BIN="$(command -v npm 2>/dev/null)"
 
-# ANSI colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 
@@ -43,179 +30,111 @@ printf "${BOLD}"
 echo "╔══════════════════════════════════════════════════╗"
 echo "║    YOU ROCK VOLATILITY INCOME FUND               ║"
 echo "║    System Startup & Pre-flight Check             ║"
+echo "║    (Containerized — Docker manages services)     ║"
 echo "╚══════════════════════════════════════════════════╝"
 printf "${NC}"
 echo "  $(date '+%A %Y-%m-%d  %H:%M:%S %Z')"
 
+cd "$PROJ"
+
 # ═════════════════════════════════════════════════════════════
-section "1 / 4   IB Gateway  (via IBC launchd service)"
+section "1 / 4   Docker Engine"
 # ═════════════════════════════════════════════════════════════
 
-ibkr_port_open() {
-    lsof -i :4002 > /dev/null 2>&1 || lsof -i :4001 > /dev/null 2>&1
-}
+if ! command -v docker &>/dev/null; then
+    fail "docker not found — install Rancher Desktop from https://rancherdesktop.io"
+elif ! docker info &>/dev/null 2>&1; then
+    fail "Docker daemon not running — start Rancher Desktop"
+else
+    DOCKER_VER=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
+    pass "Docker running  (server $DOCKER_VER)"
+fi
 
-GW_PID=$(launchctl list "$GW_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
+# ═════════════════════════════════════════════════════════════
+section "2 / 4   Container Health  (docker compose ps)"
+# ═════════════════════════════════════════════════════════════
 
-if [ -n "$GW_PID" ] && ibkr_port_open; then
-    pass "IB Gateway running  (PID $GW_PID, API port open)"
+if [ ! -f ".env.compose" ]; then
+    fail ".env.compose not found — run setup_docker.sh first"
+else
+    PS_OUT=$(docker compose --env-file .env.compose ps 2>/dev/null || true)
+    ALL_UP=true
 
-elif [ -n "$GW_PID" ]; then
-    # Process alive but port not open yet — likely still loading
-    warn "IB Gateway running (PID $GW_PID) but API port not open yet — waiting..."
-    for i in $(seq 1 30); do sleep 1; ibkr_port_open && break; printf "."; done
-    echo ""
-    if ibkr_port_open; then
-        pass "IB Gateway API port now open"
-    else
-        warn "API port still closed — IB Gateway may be logging in (allow ~60 s)"
-    fi
-
-elif launchctl list "$GW_LABEL" > /dev/null 2>&1; then
-    # Registered but not running — restart it
-    warn "IB Gateway service registered but not running — restarting..."
-    launchctl kickstart -k "gui/$(id -u)/$GW_LABEL" > /dev/null 2>&1 || true
-    printf "      ⏳ Waiting up to 45 seconds for IB Gateway to launch"
-    for i in $(seq 1 45); do
-        sleep 1; printf "."
-        GW_PID=$(launchctl list "$GW_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-        [ -n "$GW_PID" ] && ibkr_port_open && break
+    for svc in ib_gateway api scheduler web; do
+        SVC_LINE=$(echo "$PS_OUT" | grep -i "$svc" | head -1 || true)
+        if echo "$SVC_LINE" | grep -qiE "Up|running|healthy"; then
+            STATUS=$(echo "$SVC_LINE" | grep -oiE "Up [^[:space:]].*|running|healthy" | head -1 || echo "Up")
+            pass "Container $svc — $STATUS"
+        elif [ -z "$SVC_LINE" ]; then
+            fail "Container $svc — not found"
+            ALL_UP=false
+        else
+            warn "Container $svc — $(echo "$SVC_LINE" | awk '{print $NF}')"
+            ALL_UP=false
+        fi
     done
-    echo ""
-    GW_PID=$(launchctl list "$GW_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-    if [ -n "$GW_PID" ]; then
-        pass "IB Gateway restarted  (PID $GW_PID)"
-    else
-        fail "IB Gateway failed to restart"
-        [ -f "$IBC_LOG" ] && warn "Last log line: $(tail -1 "$IBC_LOG" 2>/dev/null)"
-        warn "Run:  tail -f $IBC_LOG"
-    fi
 
-else
-    fail "IBC launchd service not installed (com.yourockfund.ibgateway)"
-    warn "Run setup once:  bash $PROJ/setup_ibc.sh"
-fi
-
-# ═════════════════════════════════════════════════════════════
-section "2 / 4   YRVI Scheduler (launchd)"
-# ═════════════════════════════════════════════════════════════
-
-# Kill any old nohup scheduler that predates launchd management
-OLD_NOHUP=$(pgrep -f "python.*scheduler.py" 2>/dev/null | \
-            while read pid; do
-                # Exclude if it's the launchd-managed one (parent = launchd PID 1)
-                ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-                [ "$ppid" = "1" ] || echo "$pid"
-            done)
-if [ -n "$OLD_NOHUP" ]; then
-    warn "Found non-launchd scheduler process(es): $OLD_NOHUP — stopping them..."
-    echo "$OLD_NOHUP" | xargs kill 2>/dev/null || true
-    sleep 1
-fi
-
-# Ensure plist is in LaunchAgents (substitute __PROJ__ and __HOME__ placeholders)
-if [ ! -f "$PLIST_DEST" ]; then
-    warn "Plist not in LaunchAgents — installing..."
-    sed -e "s|__PROJ__|$PROJ|g" -e "s|__HOME__|$HOME|g" "$PLIST_SRC" > "$PLIST_DEST"
-fi
-
-# Check and start via launchd
-SCHED_PID=$(launchctl list "$LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-
-if [ -n "$SCHED_PID" ]; then
-    pass "Scheduler running via launchd  (PID $SCHED_PID)"
-elif launchctl list "$LABEL" > /dev/null 2>&1; then
-    # Registered but not running (crashed or clean exit) — kick it
-    warn "Scheduler registered but not running — restarting..."
-    launchctl kickstart -k "gui/$(id -u)/$LABEL" > /dev/null 2>&1 || true
-    sleep 3
-    SCHED_PID=$(launchctl list "$LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-    if [ -n "$SCHED_PID" ]; then
-        pass "Scheduler restarted  (PID $SCHED_PID)"
-    else
-        fail "Scheduler failed to restart — check scheduler_stderr.log"
-    fi
-else
-    # Not registered at all — bootstrap it
-    warn "Scheduler not loaded — bootstrapping via launchd..."
-    launchctl bootstrap "gui/$(id -u)" "$PLIST_DEST" 2>/dev/null || \
-        launchctl load "$PLIST_DEST" 2>/dev/null
-    sleep 3
-    SCHED_PID=$(launchctl list "$LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-    if [ -n "$SCHED_PID" ]; then
-        pass "Scheduler bootstrapped  (PID $SCHED_PID)"
-    else
-        fail "Could not bootstrap scheduler"
-        fail "Manual fix: launchctl bootstrap gui/\$(id -u) $PLIST_DEST"
+    if [ "$ALL_UP" = "false" ]; then
+        echo ""
+        printf "  ${YELLOW}ℹ️${NC}   Bringing up stopped containers...\n"
+        docker compose --env-file .env.compose up -d 2>/dev/null || true
+        echo ""
     fi
 fi
 
 # ═════════════════════════════════════════════════════════════
-section "3 / 4   IBKR Connection  (127.0.0.1:\$IBKR_PORT)"
+section "3 / 4   API Health  (http://localhost:8000/api/status)"
 # ═════════════════════════════════════════════════════════════
 
-# Read port from .env so this section stays in sync with config automatically
-IBKR_PORT_VAL=$("$PYTHON" -c "
-import os; from dotenv import load_dotenv; load_dotenv()
-print(os.environ.get('IBKR_PORT', '4002'))
-" 2>/dev/null)
-IBKR_PORT_VAL="${IBKR_PORT_VAL:-4002}"
+API_RESP=$(curl -sf --max-time 8 http://localhost:8000/api/status 2>/dev/null || true)
 
-IBKR_OUT=$("$PYTHON" -c "
-import sys
-sys.path.insert(0, '$PROJ')
-from ib_insync import IB
-ib = IB()
-try:
-    ib.connect('127.0.0.1', $IBKR_PORT_VAL, clientId=98, timeout=8)
-    accts = ib.managedAccounts()
-    print('OK account=' + (accts[0] if accts else 'unknown'))
-    ib.disconnect()
-except Exception as e:
-    print('FAIL ' + str(e))
-" 2>/dev/null)
-
-if echo "$IBKR_OUT" | grep -q "^OK"; then
-    ACCT=$(echo "$IBKR_OUT" | sed 's/.*account=//')
-    pass "Connected  (account: $ACCT)"
+if [ -z "$API_RESP" ]; then
+    fail "API not responding on port 8000 — check:"
+    warn "  docker compose --env-file .env.compose logs api"
 else
-    ERR=$(echo "$IBKR_OUT" | sed 's/^FAIL //')
-    fail "Connection failed: $ERR"
-    warn "IB Gateway paper=4002 live=4001 | check IB Gateway is running and API is enabled"
+    GW_RUNNING=$(echo "$API_RESP" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d.get('gateway_running','?'))" 2>/dev/null || echo "?")
+    IBKR_CONN=$(echo "$API_RESP" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d.get('ibkr_connected','?'))" 2>/dev/null || echo "?")
+    ACCOUNT=$(echo "$API_RESP" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d.get('account','unknown'))" 2>/dev/null || echo "unknown")
+    TRADING_MODE=$(echo "$API_RESP" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d.get('trading_mode','?'))" 2>/dev/null || echo "?")
+
+    pass "API responding  (mode: $TRADING_MODE)"
+
+    if [ "$GW_RUNNING" = "True" ] || [ "$GW_RUNNING" = "true" ]; then
+        pass "IB Gateway container: running"
+    else
+        warn "IB Gateway not yet running — allow 60 s, then:"
+        warn "  docker compose --env-file .env.compose logs -f ib_gateway"
+    fi
+
+    if [ "$IBKR_CONN" = "True" ] || [ "$IBKR_CONN" = "true" ]; then
+        pass "IBKR connected  (account: $ACCOUNT)"
+    else
+        warn "IBKR not connected — Gateway may still be logging in"
+    fi
 fi
 
 # ═════════════════════════════════════════════════════════════
 section "4 / 4   Pre-flight Checks"
 # ═════════════════════════════════════════════════════════════
 
-cd "$PROJ"
-
-# .env populated
-ALL_ENV_OK=true
-for KEY in IBKR_HOST IBKR_PORT IBKR_CLIENT_ID ACCOUNT RENDER_URL RENDER_SECRET; do
-    VAL=$("$PYTHON" -c "
-import os; from dotenv import load_dotenv; load_dotenv()
-print(os.environ.get('$KEY', ''))
-" 2>/dev/null)
-    if [ -z "$VAL" ]; then
-        fail ".env key missing: $KEY"
-        ALL_ENV_OK=false
+# DRY_RUN from running API settings endpoint
+DRY_RESP=$(curl -sf --max-time 5 http://localhost:8000/api/settings 2>/dev/null || true)
+if [ -n "$DRY_RESP" ]; then
+    DRY=$(echo "$DRY_RESP" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d.get('dry_run','?'))" 2>/dev/null || echo "?")
+    if [ "$DRY" = "False" ] || [ "$DRY" = "false" ]; then
+        pass "DRY_RUN = false  (live orders enabled)"
+    elif [ "$DRY" = "True" ] || [ "$DRY" = "true" ]; then
+        warn "DRY_RUN = true — no real orders will be placed"
+    else
+        warn "Could not determine DRY_RUN state from API"
     fi
-done
-[ "$ALL_ENV_OK" = "true" ] && pass ".env — all 6 keys populated"
-
-# DRY_RUN (read from settings.json via config.get_settings)
-DRY=$("$PYTHON" -c "
-from config import get_settings
-s = get_settings()
-print(s.get('dry_run', False))
-" 2>/dev/null)
-if [ "$DRY" = "False" ]; then
-    pass "DRY_RUN = False  (live orders enabled)"
-elif [ "$DRY" = "True" ]; then
-    warn "DRY_RUN = True  — no real orders will be placed"
 else
-    warn "Could not determine DRY_RUN state (settings.json missing?)"
+    warn "Could not reach API settings endpoint"
 fi
 
 # MIN_DAYS_TO_EXPIRY
@@ -226,52 +145,14 @@ else
     warn "MIN_DAYS_TO_EXPIRY = ${DTE:-unknown}  (expected 3 — Mon→Fri = 3 DTE)"
 fi
 
-# Screener + position sizer
-printf "  🔄  Fetching screener targets...\r"
-SCREEN_OUT=$("$PYTHON" -c "
-import sys, os
-sys.path.insert(0, '$PROJ')
-os.chdir('$PROJ')
-from screener import get_top_targets
-from position_sizer import size_all
-try:
-    targets   = get_top_targets(10)
-    positions = size_all(targets)
-    cap  = sum(p['capital_used']  for p in positions)
-    prem = sum(p['premium_total'] for p in positions)
-    yld  = (prem / cap * 100) if cap > 0 else 0
-    print(f'OK t={len(targets)} p={len(positions)} cap={cap:.0f} prem={prem:.0f} yld={yld:.2f}')
-except Exception as e:
-    print('FAIL ' + str(e))
-" 2>/dev/null)
-
-if echo "$SCREEN_OUT" | grep -q "^OK"; then
-    T=$(echo    "$SCREEN_OUT" | grep -o 't=[0-9]*'    | cut -d= -f2)
-    P=$(echo    "$SCREEN_OUT" | grep -o ' p=[0-9]*'   | tr -d ' ' | cut -d= -f2)
-    CAP=$(echo  "$SCREEN_OUT" | grep -o 'cap=[0-9]*'  | cut -d= -f2)
-    PREM=$(echo "$SCREEN_OUT" | grep -o 'prem=[0-9]*' | cut -d= -f2)
-    YLD=$(echo  "$SCREEN_OUT" | grep -o 'yld=[0-9.]*' | cut -d= -f2)
-    CAPF=$("$PYTHON" -c "print(f'\${int(\"$CAP\"):,}')" 2>/dev/null || echo "\$$CAP")
-    PREMF=$("$PYTHON" -c "print(f'\${int(\"$PREM\"):,}')" 2>/dev/null || echo "\$$PREM")
-    pass "Screener: $T targets → $P positions  $CAPF deployed  $PREMF premium  ${YLD}% yield"
-    DOW=$(date +%u)   # 1=Mon … 7=Sun
-    if [ "$P" -eq 0 ]; then
-        if [ "$DOW" -le 2 ]; then
-            # Mon/Tue — trades are imminent, 0 positions is critical
-            fail "0 positions sized — pipeline would abort Monday"
-        elif [ "$DOW" -le 5 ]; then
-            # Wed/Thu/Fri — screener resets Saturday; mid-week zeros are normal
-            warn "0 positions now (mid-week) — new targets load Saturday 6 PM"
-        else
-            # Sat/Sun — Saturday screener should have run; worth flagging
-            warn "0 positions — screener preview may not have run yet"
-        fi
-    elif [ "$P" -lt 5 ]; then
-        warn "Only $P / 5 positions sized — auto-replacement will fill remaining"
-    fi
+# Scheduler container health
+SCHED_LINE=$(docker compose --env-file .env.compose ps 2>/dev/null \
+    | grep -i "scheduler" | head -1 || true)
+if echo "$SCHED_LINE" | grep -qiE "Up|running|healthy"; then
+    pass "Scheduler container healthy"
 else
-    ERR=$(echo "$SCREEN_OUT" | sed 's/^FAIL //')
-    fail "Screener/sizer error: $ERR"
+    warn "Scheduler container status unclear — check:"
+    warn "  docker compose --env-file .env.compose logs scheduler"
 fi
 
 # ═════════════════════════════════════════════════════════════
@@ -285,7 +166,7 @@ printf "${YELLOW}%d warning(s)${NC}  "     "$WARN"
 printf "${RED}%d failed${NC}\n"             "$FAIL"
 echo "══════════════════════════════════════════════════════"
 
-DOW_FINAL=$(date +%u)   # 1=Mon … 7=Sun
+DOW_FINAL=$(date +%u)
 case "$DOW_FINAL" in
     1|2) DAY_CTX="Monday trading is imminent" ;;
     3)   DAY_CTX="next trade Monday 10:00 AM PST" ;;
@@ -305,115 +186,6 @@ elif [ "$FAIL" -eq 0 ]; then
 else
     echo ""
     printf "  ${BOLD}${RED}🔴  NO-GO — resolve %d critical issue(s)  (%s)${NC}\n" "$FAIL" "$DAY_CTX"
-fi
-
-# ═════════════════════════════════════════════════════════════
-section "5 / 5   YRVI Dashboard API  (launchd)"
-# ═════════════════════════════════════════════════════════════
-
-# Kill any stale nohup API process that predates launchd management
-OLD_NOHUP_API=$(pgrep -f "python.*uvicorn.*api:app" 2>/dev/null | \
-    while read pid; do
-        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-        [ "$ppid" = "1" ] || echo "$pid"
-    done)
-if [ -n "$OLD_NOHUP_API" ]; then
-    warn "Found non-launchd API process(es): $OLD_NOHUP_API — stopping them..."
-    echo "$OLD_NOHUP_API" | xargs kill 2>/dev/null || true
-    sleep 1
-fi
-
-# Ensure plist is installed in LaunchAgents
-if [ ! -f "$API_PLIST_DEST" ]; then
-    warn "API plist not in LaunchAgents — installing..."
-    sed -e "s|__PROJ__|$PROJ|g" -e "s|__HOME__|$HOME|g" "$API_PLIST_SRC" > "$API_PLIST_DEST"
-fi
-
-API_PID=$(launchctl list "$API_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-
-if [ -n "$API_PID" ]; then
-    pass "Dashboard API running via launchd  (PID $API_PID, port 8000)"
-elif launchctl list "$API_LABEL" > /dev/null 2>&1; then
-    warn "API service registered but not running — restarting..."
-    launchctl kickstart -k "gui/$(id -u)/$API_LABEL" > /dev/null 2>&1 || true
-    sleep 3
-    API_PID=$(launchctl list "$API_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-    if [ -n "$API_PID" ]; then
-        pass "Dashboard API restarted  (PID $API_PID)"
-    else
-        fail "Dashboard API failed to restart — check api_stderr.log"
-    fi
-else
-    warn "API service not loaded — bootstrapping via launchd..."
-    launchctl bootstrap "gui/$(id -u)" "$API_PLIST_DEST" 2>/dev/null || \
-        launchctl load "$API_PLIST_DEST" 2>/dev/null
-    sleep 3
-    API_PID=$(launchctl list "$API_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-    if [ -n "$API_PID" ]; then
-        pass "Dashboard API bootstrapped  (PID $API_PID)"
-    else
-        fail "Could not bootstrap API — manual fix:"
-        fail "  launchctl bootstrap gui/\$(id -u) $API_PLIST_DEST"
-    fi
-fi
-
-# React dashboard (vite preview — serves pre-built dist/ via launchd)
-APP_DIR="$PROJ/yrvi-app"
-
-# Kill any stale nohup npm start process that predates launchd management
-OLD_NOHUP_DASH=$(pgrep -f "npm.*start|vite.*port 3000|vite.*preview" 2>/dev/null | \
-    while read pid; do
-        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-        [ "$ppid" = "1" ] || echo "$pid"
-    done)
-if [ -n "$OLD_NOHUP_DASH" ]; then
-    warn "Found non-launchd dashboard process(es): $OLD_NOHUP_DASH — stopping them..."
-    echo "$OLD_NOHUP_DASH" | xargs kill 2>/dev/null || true
-    sleep 1
-fi
-
-if [ -z "$NPM_BIN" ]; then
-    warn "npm not found — install Node.js to enable the dashboard"
-elif [ ! -d "$APP_DIR/dist" ]; then
-    warn "yrvi-app/dist not found — run:  cd yrvi-app && npm run build"
-    warn "Dashboard will not start until the app is built"
-else
-    # Install plist if not already in LaunchAgents
-    if [ ! -f "$DASH_PLIST_DEST" ]; then
-        warn "Dashboard plist not in LaunchAgents — installing..."
-        sed -e "s|__PROJ__|$PROJ|g" \
-            -e "s|__HOME__|$HOME|g" \
-            -e "s|__NPM__|$NPM_BIN|g" \
-            "$DASH_PLIST_SRC" > "$DASH_PLIST_DEST"
-    fi
-
-    DASH_PID=$(launchctl list "$DASH_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-
-    if [ -n "$DASH_PID" ]; then
-        pass "React dashboard running via launchd  (PID $DASH_PID, port 3000)"
-    elif launchctl list "$DASH_LABEL" > /dev/null 2>&1; then
-        warn "Dashboard service registered but not running — restarting..."
-        launchctl kickstart -k "gui/$(id -u)/$DASH_LABEL" > /dev/null 2>&1 || true
-        sleep 3
-        DASH_PID=$(launchctl list "$DASH_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-        if [ -n "$DASH_PID" ]; then
-            pass "React dashboard restarted  (PID $DASH_PID)"
-        else
-            fail "React dashboard failed to restart — check $APP_DIR/preview_stderr.log"
-        fi
-    else
-        warn "Dashboard service not loaded — bootstrapping via launchd..."
-        launchctl bootstrap "gui/$(id -u)" "$DASH_PLIST_DEST" 2>/dev/null || \
-            launchctl load "$DASH_PLIST_DEST" 2>/dev/null
-        sleep 3
-        DASH_PID=$(launchctl list "$DASH_LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*' || true)
-        if [ -n "$DASH_PID" ]; then
-            pass "React dashboard bootstrapped  (PID $DASH_PID)"
-        else
-            fail "Could not bootstrap dashboard — manual fix:"
-            fail "  launchctl bootstrap gui/\$(id -u) $DASH_PLIST_DEST"
-        fi
-    fi
 fi
 
 echo ""

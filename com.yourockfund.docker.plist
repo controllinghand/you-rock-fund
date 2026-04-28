@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.yourockfund.docker</string>
+
+    <!-- Runs docker compose up -d on every login so containers restart after a reboot. -->
+    <!-- setup_docker.sh installs this to ~/Library/LaunchAgents/ with __PROJ__ substituted. -->
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-l</string>
+        <string>-c</string>
+        <string>docker compose --env-file .env.compose up -d</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJ__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Cover both Homebrew paths and Rancher Desktop's /usr/local/bin symlink. -->
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__PROJ__/docker_start_stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__PROJ__/docker_start_stderr.log</string>
+</dict>
+</plist>

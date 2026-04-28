@@ -1,5 +1,60 @@
 # Containerized YRVI
 
+## Quickstart — New Install (5 Steps)
+
+**Step 1 — Install Rancher Desktop**
+Download from [rancherdesktop.io](https://rancherdesktop.io) and start it. Enable dockerd (moby) in Preferences → Container Engine. Wait for the status indicator to show "Running."
+
+**Step 2 — Clone the repo**
+```bash
+git clone https://github.com/controllinghand/you_rock_fund.git you_rock_fund
+cd you_rock_fund
+git switch containerized
+```
+
+**Step 3 — Set up secrets and config**
+```bash
+cp .env.compose.example .env.compose
+mkdir -p docker/secrets
+cp docker/secrets.example/* docker/secrets/
+chmod 600 docker/secrets/*
+```
+
+Edit `.env.compose` and fill in your IBKR paper credentials:
+```env
+ACCOUNT_PAPER=DUP_YOUR_PAPER_ACCOUNT_ID
+TWS_USERID_PAPER=your_paper_login_username
+```
+
+Write your passwords into the secret files (one value per file, no quotes):
+```
+docker/secrets/tws_password_paper
+docker/secrets/render_secret
+```
+
+**Step 4 — Run setup**
+```bash
+bash setup_docker.sh
+```
+
+This validates your config, builds all 4 containers, starts the stack, and installs a Mac login item so containers restart automatically after a reboot.
+
+**Step 5 — Open the dashboard**
+```
+http://localhost:3000
+```
+
+Wait for IB Gateway to finish logging in (takes 30–90 s). Watch the log:
+```bash
+docker compose --env-file .env.compose logs -f ib_gateway
+```
+
+Look for `Login has completed` in the output. The dashboard API status at `http://localhost:8000/api/status` will show `"ibkr_connected": true` when ready.
+
+> **Note:** `setup_ibc.sh` and the launchd plist files in this repo are for the non-containerized branch only. Docker replaces launchd on this branch — do not run `setup_ibc.sh`.
+
+---
+
 This setup runs YRVI locally with Rancher Desktop or Docker-compatible tooling:
 
 - `ib_gateway`: Interactive Brokers Gateway + IBC from `ghcr.io/gnzsnz/ib-gateway:latest`
