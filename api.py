@@ -242,10 +242,10 @@ def _get_ibkr_data(settings: dict) -> dict:
                 # ── Portfolio data for market prices / P&L
                 portfolio_lookup: dict = {}
                 try:
-                    ib.reqAccountUpdates(True, acct)
+                    ib.reqAccountUpdates(True)
                     ib.sleep(3)
                     portfolio_items = ib.portfolio()
-                    ib.reqAccountUpdates(False, acct)
+                    ib.reqAccountUpdates(False)
                     for item in portfolio_items:
                         portfolio_lookup[item.contract.conId] = {
                             "marketPrice":   _safe_float(item.marketPrice),
