@@ -52,6 +52,15 @@ fi
 DOCKER_VER=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
 ok "Docker running  (server $DOCKER_VER)"
 
+echo ""
+warn "Make sure Rancher Desktop is set to auto-start:"
+echo "       Preferences → Application →"
+echo "         ✅  Automatically start at login"
+echo "         ✅  Start in background"
+echo "       This ensures Docker is running before YRVI containers"
+echo "       restart after a reboot."
+echo ""
+
 # ── Step 2: Validate secrets and config ───────────────────────
 echo ""
 echo "${BOLD}Step 2 / 4   Validate secrets and config${NC}"

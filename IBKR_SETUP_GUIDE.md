@@ -248,19 +248,39 @@ IBKR_PORT=4001          # 4001 = live trading
 
 ---
 
-## Step 10 — Download IB Gateway
+## Step 10 — Install and Configure YRVI
 
-> **Note:** If you're running `setup_ibc.sh` on a Mac, IB Gateway is downloaded and installed automatically. You can skip this step.
-> `setup_ibc.sh` detects your CPU architecture and downloads the correct installer automatically — both Intel (x86_64) and Apple Silicon (M4/ARM) Macs are supported.
+> **Docker (recommended):** `setup_docker.sh` handles everything — IB Gateway runs inside a container automatically. Manual IB Gateway installation is not needed.
 
-For manual installation:
+### Docker Setup (Recommended)
+
+1. Install **[Rancher Desktop](https://rancherdesktop.io)** and enable the dockerd (moby) engine in Preferences → Container Engine.
+
+2. ⚠️ **Configure Rancher Desktop to auto-start** — this is required so Docker is running before YRVI containers start after a reboot:
+   - Open Rancher Desktop → **Preferences → Application**
+   - Check ✅ **Automatically start at login**
+   - Check ✅ **Start in background**
+   - Click **Apply**
+
+3. Run the one-command setup:
+   ```bash
+   git clone https://github.com/controllinghand/you_rock_fund.git you_rock_fund
+   cd you_rock_fund
+   bash setup_docker.sh
+   ```
+
+See [CONTAINERIZATION.md](CONTAINERIZATION.md) for the full guide including credentials, 2FA, and troubleshooting.
+
+### Manual / Legacy Setup (macOS only)
+
+If you're using the original launchd-based setup instead of Docker:
 
 1. Go to: **https://www.interactivebrokers.com/en/trading/ibgateway-stable.php**
-2. Click **"Download IB Gateway Stable"** — choose the correct macOS version for your Mac:
-   - **Apple Silicon (M4/M3/M2/M1):** choose the `arm64` / Apple Silicon build
-   - **Intel Mac:** choose the `x64` / Intel build
+2. Click **"Download IB Gateway Stable"** — choose the correct macOS version:
+   - **Apple Silicon (M4/M3/M2/M1):** `arm64` / Apple Silicon build
+   - **Intel Mac:** `x64` / Intel build
 3. Run the `.dmg` installer — the default install location is fine
-4. **Do not open IB Gateway manually** — `setup_ibc.sh` configures it to launch automatically via launchd
+4. Run `bash setup_ibc.sh` — this configures IB Gateway to launch automatically via launchd
 
 > **IB Gateway vs TWS:** YRVI uses IB Gateway, not Trader Workstation (TWS). They serve the same API but IB Gateway is lightweight and headless — better for automated trading. Use IB Gateway ports: **4002** (paper) and **4001** (live).
 
@@ -344,7 +364,8 @@ When you confirm, YRVI automatically:
 - **Never share your password.** YRVI stores credentials only in your local `.env` file, which is excluded from git (never uploaded to GitHub).
 - **Start with paper trading** for at least 4 weeks to validate the system before risking real capital.
 - **Only use money you can afford to have tied up.** CSPs tie up collateral for the duration of the contract (typically 1 week). Stop losses are set at 10% below strike — this is the maximum per-position loss in a bad week.
-- **Keep IB Gateway running.** YRVI connects to IB Gateway to place orders. If IB Gateway is closed, trades won't execute. `setup_ibc.sh` configures it to start automatically on login.
+- **Keep IB Gateway running.** YRVI connects to IB Gateway to place orders. If IB Gateway is closed, trades won't execute. With Docker, `setup_docker.sh` handles this automatically. With the legacy launchd setup, `setup_ibc.sh` configures it to start automatically on login.
+- **Keep Rancher Desktop set to auto-start** (Docker setup only). If Rancher Desktop is not configured to start at login, Docker won't be available when YRVI containers try to restart after a reboot. Set this in Preferences → Application → ✅ Automatically start at login + ✅ Start in background.
 
 ---
 
@@ -354,7 +375,8 @@ When you confirm, YRVI automatically:
 |-----|--------|
 | Day 1 | Submit IBKR application, upload ID documents |
 | Day 2–3 | IBKR reviews and approves account |
-| Day 3 | Run `bash setup_ibc.sh` — installs everything automatically |
-| Day 3 | Paper trading begins with `IBKR_PORT=4002` |
+| Day 3 | Install Rancher Desktop; enable auto-start (Preferences → Application) |
+| Day 3 | Run `bash setup_docker.sh` — builds containers and installs login item |
+| Day 3 | Paper trading begins via IB Gateway container |
 | Week 1–4 | Run full YRVI system in paper mode, review results each Monday |
 | Week 4–8 | Fund live account, switch `IBKR_PORT=4001`, go live |

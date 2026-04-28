@@ -5,6 +5,17 @@
 **Step 1 — Install Rancher Desktop**
 Download from [rancherdesktop.io](https://rancherdesktop.io) and start it. Enable dockerd (moby) in Preferences → Container Engine. Wait for the status indicator to show "Running."
 
+> ⚠️ **IMPORTANT: Configure Rancher Desktop to auto-start**
+>
+> Without this, Docker won't be running when the YRVI containers try to start after a reboot.
+>
+> 1. Open Rancher Desktop
+> 2. Click **Preferences**
+> 3. Under **Application**, check:
+>    - ✅ **Automatically start at login**
+>    - ✅ **Start in background**
+> 4. Click **Apply**
+
 **Step 2 — Clone the repo**
 ```bash
 git clone https://github.com/controllinghand/you_rock_fund.git you_rock_fund
