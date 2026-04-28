@@ -1,6 +1,6 @@
 # You Rock Volatility Income Fund (YRVI)
 
-![Version](https://img.shields.io/badge/version-0.1.0--beta-blue)
+![Version](https://img.shields.io/badge/version-1.0.0--beta-blue)
 
 An automated Python algorithmic options trading system that generates weekly income through the complete wheel strategy — selling cash-secured puts (CSPs), managing assignments with covered calls (CCs), and enforcing automatic stop losses — all running 24/7 on a Mac Mini with zero manual intervention.
 
@@ -68,137 +68,91 @@ New to IBKR? See the **[IBKR Account Setup Guide](IBKR_SETUP_GUIDE.md)** for a c
 
 ## Prerequisites
 
-- Python 3.13+
-- [IB Gateway](https://www.interactivebrokers.com/en/trading/ibgateway-stable.php) running locally (set up via `setup_ibc.sh`)
+- [Rancher Desktop](https://rancherdesktop.io) or Docker Desktop (dockerd/moby engine)
 - Access to the You Rock Club screener API (Render)
 
-### IB Gateway vs TWS port numbers
+### IB Gateway port reference
 
-| Application | Paper trading | Live trading |
-|---|---|---|
-| **IB Gateway** (this system) | **4002** | **4001** |
-| TWS | 7497 | 7496 |
+| Mode | Port (inside Docker network) |
+|---|---|
+| Paper trading | 4004 |
+| Live trading | 4003 |
 
-IB Gateway uses different ports than TWS. `IBKR_PORT=4002` is the correct default for paper trading via IB Gateway.
+These are the ports the Python containers use to reach IB Gateway inside the Compose network. They differ from the standalone IB Gateway defaults (4002/4001) used in the legacy launchd setup.
 
 ## Installation
 
 ```bash
 git clone https://github.com/controllinghand/you_rock_fund.git you_rock_fund
 cd you_rock_fund
+bash setup_docker.sh
 ```
 
-Copy the template and fill in your credentials:
+`setup_docker.sh` validates your config, builds all four containers (`ib_gateway`, `api`, `scheduler`, `web`), starts the stack, and installs a login item so containers restart automatically after a reboot.
 
-```bash
-cp .env.template .env
-```
-
-Edit `.env` with your values:
-
-```env
-IBKR_HOST=127.0.0.1
-IBKR_PORT=4002          # IB Gateway: 4002 = paper, 4001 = live
-IBKR_CLIENT_ID=1
-ACCOUNT=YOUR_IBKR_ACCOUNT_ID
-IBKR_USERNAME=your_ibkr_username
-IBKR_PASSWORD=your_ibkr_password
-RENDER_URL=https://yourockclub-ledger-sync.onrender.com/api/targets/csp
-RENDER_SECRET=get_from_fund_operator   # contact Sean for this value
-```
-
-Fund parameters (capital, position targets, schedule) are constants in `config.py`.
-
-## IB Gateway Auto-Login (Mac Mini)
-
-> **Containerized branch:** Docker replaces launchd on this branch. Use `bash setup_docker.sh` instead of `setup_ibc.sh`. See [CONTAINERIZATION.md](CONTAINERIZATION.md) for the full setup guide.
-
-IB Gateway is managed by IBC and launchd — it starts automatically at login and re-authenticates without manual intervention.
-
-**One-time setup (run once per machine — non-containerized only):**
-```bash
-bash setup_ibc.sh
-```
-
-`setup_ibc.sh` handles everything automatically:
-- Installs Homebrew, Python 3.13, git, and Node.js if missing
-- Creates the Python virtual environment and installs all dependencies
-- Downloads and installs IB Gateway if not already present
-- Downloads IBC, generates `~/IBC/config.ini` from your `.env`
-- Installs the `com.yourockfund.ibgateway` launchd service so IB Gateway starts on every login
-
-> **Note:** IBKR's offline installer may include the version number in the install path,
-> e.g. `~/Applications/IB Gateway 10.37/IB Gateway 10.37.app`. `setup_ibc.sh`
-> handles both the fixed path and any versioned path automatically.
-
-**IB Gateway service management:**
-```bash
-# Status
-launchctl list com.yourockfund.ibgateway
-
-# Restart
-launchctl kickstart -k gui/$(id -u) com.yourockfund.ibgateway
-
-# Logs
-tail -f ~/IBC/Logs/ibgateway_stdout.log
-tail -f ~/IBC/Logs/ibgateway_stderr.log
-```
+See **[CONTAINERIZATION.md](CONTAINERIZATION.md)** for the full setup guide — secrets, credentials, 2FA recovery, and troubleshooting.
 
 ## Mac Startup (after any reboot)
 
-**Double-click `YRVI Startup` on your Desktop** to run the pre-flight check. It opens a Terminal window, verifies IB Gateway is running, ensures the scheduler is alive, tests the IBKR API connection, and prints a full GO/NO-GO table.
+**Double-click `YRVI Startup` on your Desktop** to run the pre-flight check. It verifies the Docker containers are running and prints a full GO/NO-GO status table.
 
-> `setup_ibc.sh` builds the app automatically — it converts the You Rock Club logo into a proper `.icns` icon, assembles the `.app` bundle, and places it on your Desktop. No manual steps needed.
-
-Or run directly from the terminal:
+Or from the terminal:
 ```bash
 bash ~/you_rock_fund/startup.sh
 ```
 
-The scheduler is managed by macOS **launchd** — it starts automatically at login and restarts itself if it ever crashes. No manual `nohup` needed.
-
-**Scheduler management:**
+**Container management:**
 ```bash
 # Status
-launchctl list com.yourockfund.scheduler
-
-# Stop
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.yourockfund.scheduler.plist
-
-# Start / reload after plist changes
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.yourockfund.scheduler.plist
+docker compose --env-file .env.compose ps
 
 # Logs
-tail -f ~/you_rock_fund/scheduler_stdout.log
-tail -f ~/you_rock_fund/scheduler_stderr.log
+docker compose --env-file .env.compose logs -f scheduler
+docker compose --env-file .env.compose logs -f ib_gateway
+
+# Restart scheduler
+docker compose --env-file .env.compose restart scheduler
 ```
 
 ## Running Manually
 
 **Run full pipeline once immediately** (screener → size → execute):
 ```bash
-source venv/bin/activate
-python trader.py
+docker compose --env-file .env.compose exec scheduler python - <<'PY'
+import scheduler
+scheduler.run_pipeline()
+PY
 ```
 
 **Manual wheel operations:**
 ```bash
-python wheel_manager.py detect   # run assignment detection now
-python wheel_manager.py check    # run wheel check (stop loss + CCs) now
-python risk_manager.py           # run daily risk monitor now
+docker compose --env-file .env.compose exec scheduler python wheel_manager.py detect
+docker compose --env-file .env.compose exec scheduler python wheel_manager.py check
+docker compose --env-file .env.compose exec scheduler python risk_manager.py
 ```
 
-**Dry run** — set `DRY_RUN = True` in `trader.py` to simulate without placing orders.
+**Dry run** — set `dry_run: true` via the dashboard settings or the API:
+```bash
+curl -sS -X POST http://127.0.0.1:3000/api/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"dry_run":true}'
+```
 
 ## Monitoring
 
+**Live container logs:**
 ```bash
-tail -f trade_log.txt           # CSP execution details and order fills
-tail -f wheel_log.txt           # Wheel check: stop loss exits, covered calls
-tail -f risk_log.txt            # Daily risk monitor and P&L snapshots
-tail -f scheduler_stdout.log    # Scheduler stdout (launchd-managed)
-tail -f scheduler_stderr.log    # Scheduler errors (launchd-managed)
-cat state.json                  # Full system state: positions, wheel holdings, P&L
+docker compose --env-file .env.compose logs -f scheduler   # execution, wheel, risk jobs
+docker compose --env-file .env.compose logs -f api         # dashboard API requests
+docker compose --env-file .env.compose logs -f ib_gateway  # IB Gateway login status
+```
+
+**Persisted log files** (enable bind-mount override in [CONTAINERIZATION.md](CONTAINERIZATION.md) for local file access):
+```bash
+tail -f docker/data/trade_log.txt    # CSP execution details and order fills
+tail -f docker/data/wheel_log.txt    # Wheel check: stop loss exits, covered calls
+tail -f docker/data/risk_log.txt     # Daily risk monitor and P&L snapshots
+cat docker/data/state.json           # Full system state: positions, wheel holdings, P&L
 ```
 
 ## Screener Scoring
@@ -245,12 +199,14 @@ trader.py                          — IBKR CSP execution engine
 wheel_manager.py                   — Assignment detection, stop loss, covered calls
 risk_manager.py                    — Daily price monitoring and P&L tracking
 scheduler.py                       — APScheduler orchestration (5 jobs)
-startup.sh                         — Startup & pre-flight check script
-com.yourockfund.scheduler.plist    — launchd service definition (auto-start)
-.env.template                      — Environment variable template
+api.py                             — FastAPI dashboard backend
+startup.sh                         — Startup & pre-flight check (Docker-aware)
+setup_docker.sh                    — One-command Docker setup
+docker-compose.yml                 — Container stack definition
+docker/                            — Dockerfiles, entrypoint, secrets, preflight
+CONTAINERIZATION.md                — Full Docker setup and operations guide
+.env.compose.example               — Compose environment variable template
 ```
-
-The `com.yourockfund.scheduler.plist` must be present in both the project folder (for git) and `~/Library/LaunchAgents/` (for launchd). `startup.sh` keeps them in sync automatically.
 
 ## 🔔 Optional: Discord Notifications
 
@@ -297,7 +253,7 @@ A dedicated Mac Mini is the recommended setup for set-and-forget automated tradi
 | Computer | Mac Mini M4 | M5 coming ~mid 2026 |
 | RAM | 16GB | Base config is fine |
 | Storage | 256GB SSD | Base config is fine |
-| OS | macOS Sequoia | Required for launchd |
+| OS | macOS (Intel/ARM), Windows | Docker-based; macOS Sequoia for native launchd (legacy) |
 | Network | Ethernet (recommended) | More reliable than WiFi |
 
 ### Shopping List
@@ -336,7 +292,57 @@ vs $3,500+/week potential income = ROI in first week! 💰
 
 ---
 
+---
+
+## Legacy / Manual Setup (macOS launchd)
+
+> The Docker setup above is the recommended install. This section documents the original macOS-only launchd approach for reference or if Docker is not available.
+
+**Prerequisites (legacy):** Python 3.13+, macOS Sequoia, IB Gateway.
+
+**One-time setup:**
+```bash
+cp .env.template .env     # fill in IBKR credentials and RENDER_SECRET
+bash setup_ibc.sh
+```
+
+`setup_ibc.sh` installs Homebrew, Python 3.13, IB Gateway, IBC, and the launchd scheduler service.
+
+**IB Gateway service management:**
+```bash
+launchctl list com.yourockfund.ibgateway
+launchctl kickstart -k gui/$(id -u) com.yourockfund.ibgateway
+tail -f ~/IBC/Logs/ibgateway_stdout.log
+```
+
+**Scheduler management:**
+```bash
+launchctl list com.yourockfund.scheduler
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.yourockfund.scheduler.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.yourockfund.scheduler.plist
+tail -f ~/you_rock_fund/scheduler_stdout.log
+```
+
+**Monitoring (legacy):**
+```bash
+tail -f trade_log.txt        # CSP execution details
+tail -f wheel_log.txt        # Wheel check and covered calls
+tail -f risk_log.txt         # Daily risk monitor
+cat state.json               # Full system state
+```
+
+---
+
 ## Version History
+
+### v1.0.0-beta (April 2026)
+- Docker containerization (replaces launchd)
+- Cross-platform: Mac Intel/ARM + Windows
+- Secrets management via Docker secrets
+- Auto-start via Docker login plist
+- nginx serving React dashboard
+- Socket-based health checks
+- Scheduler heartbeat monitoring
 
 ### v0.1.0-beta (April 2026)
 - Initial automated trading system

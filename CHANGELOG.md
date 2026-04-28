@@ -8,9 +8,15 @@
 - Settings management
 - Paper/Live trading toggle
 
-## [1.0.0] - TBD
+## [1.0.0-beta] - April 2026
 ### Added
-- Docker containerization
-- Cross-platform support (Mac/Windows/Linux)
-- Secrets management
-- Production nginx serving
+- Docker containerization (replaces launchd)
+- Cross-platform: Mac Intel/ARM + Windows
+- Secrets management via Docker secrets
+- Auto-start via Docker login plist
+- nginx serving React dashboard
+- Socket-based health checks
+- Scheduler heartbeat monitoring
+### Changed
+- setup_docker.sh replaces setup_ibc.sh
+- startup.sh now checks Docker containers
