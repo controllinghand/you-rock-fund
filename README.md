@@ -1,5 +1,7 @@
 # You Rock Volatility Income Fund (YRVI)
 
+![Version](https://img.shields.io/badge/version-0.1.0--beta-blue)
+
 An automated Python algorithmic options trading system that generates weekly income through the complete wheel strategy — selling cash-secured puts (CSPs), managing assignments with covered calls (CCs), and enforcing automatic stop losses — all running 24/7 on a Mac Mini with zero manual intervention.
 
 ## How It Works
@@ -329,3 +331,17 @@ A dedicated Mac Mini is the recommended setup for set-and-forget automated tradi
 | **Total** | **~$584 one time** |
 
 vs $3,500+/week potential income = ROI in first week! 💰
+
+---
+
+## Version History
+
+### v0.1.0-beta (April 2026)
+- Initial automated trading system
+- Wheel strategy (CSP + CC)
+- IB Gateway auto-login via IBC
+- Zero-touch Mac reboot via launchd
+- Discord auto-posting
+- Web dashboard (React + FastAPI)
+- YRVI logo and desktop app
+- Friend install blueprint (Mac Mini)

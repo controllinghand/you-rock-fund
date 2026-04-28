@@ -556,6 +556,12 @@ def get_trade_history():
         "total_premium":    ytd.get("total_premium", 0),
     }
 
+@app.get("/api/version")
+def get_version():
+    version_file = BASE_DIR / "VERSION"
+    version = version_file.read_text().strip() if version_file.exists() else "unknown"
+    return {"version": version, "branch": "main"}
+
 @app.post("/api/discord-test")
 def test_discord():
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
