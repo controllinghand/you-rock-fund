@@ -1,6 +1,7 @@
 """YRVI Management Dashboard — FastAPI backend."""
 import asyncio
 import json
+import logging
 import os
 import random
 import re
@@ -8,6 +9,8 @@ import socket
 import subprocess
 import time
 import traceback
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -239,22 +242,18 @@ def _get_ibkr_data(settings: dict) -> dict:
                 raw_positions = ib.positions()
                 print(f"[api] reqPositions returned {len(raw_positions)} items")
 
-                # ── Portfolio data for market prices / P&L
+                # ── Debug: check if portfolio() has data after reqPositions alone
                 portfolio_lookup: dict = {}
-                try:
-                    ib.reqAccountUpdates(True)
-                    ib.sleep(3)
-                    portfolio_items = ib.portfolio()
-                    ib.reqAccountUpdates(False)
-                    for item in portfolio_items:
-                        portfolio_lookup[item.contract.conId] = {
-                            "marketPrice":   _safe_float(item.marketPrice),
-                            "marketValue":   _safe_float(item.marketValue),
-                            "unrealizedPNL": _safe_float(item.unrealizedPNL),
-                        }
-                    print(f"[api] portfolio() returned {len(portfolio_items)} items with market data")
-                except Exception as pnl_err:
-                    print(f"[api] reqAccountUpdates failed (positions show without P&L): {pnl_err}")
+                portfolio_items = ib.portfolio()
+                logger.info(f"portfolio() without subscription: {len(portfolio_items)} items")
+                for item in portfolio_items:
+                    logger.info(f"  {item.contract.symbol}: mktVal={item.marketValue} pnl={item.unrealizedPNL}")
+                for item in portfolio_items:
+                    portfolio_lookup[item.contract.conId] = {
+                        "marketPrice":   _safe_float(item.marketPrice),
+                        "marketValue":   _safe_float(item.marketValue),
+                        "unrealizedPNL": _safe_float(item.unrealizedPNL),
+                    }
 
                 portfolio = []
                 for pos in raw_positions:
