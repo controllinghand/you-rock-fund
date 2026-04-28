@@ -4,6 +4,7 @@ import json
 import os
 import random
 import re
+import socket
 import subprocess
 import time
 import traceback
@@ -41,6 +42,8 @@ LIVE_PLACEHOLDERS = {
 
 PST = ZoneInfo("America/Los_Angeles")
 ANNUAL_TARGET = 100_000
+CONTAINERIZED = os.environ.get("YRVI_CONTAINERIZED", "0") == "1"
+HEARTBEAT_FILE = BASE_DIR / "scheduler_heartbeat.json"
 # clientId 100-999 used at runtime (random per call) — never conflicts with trader(1) wheel(2) risk(3)
 
 app = FastAPI(title="YRVI Dashboard API")
@@ -276,6 +279,15 @@ def _get_ibkr_data(settings: dict) -> dict:
     return result
 
 def _scheduler_pid() -> Optional[int]:
+    if CONTAINERIZED:
+        try:
+            hb = json.loads(HEARTBEAT_FILE.read_text())
+            ts = datetime.fromisoformat(hb["timestamp"])
+            if datetime.now(PST) - ts < timedelta(minutes=3):
+                return 1
+        except Exception:
+            pass
+        return None
     try:
         r = subprocess.run(["pgrep", "-f", "python.*scheduler.py"],
                            capture_output=True, text=True)
@@ -285,6 +297,13 @@ def _scheduler_pid() -> Optional[int]:
         return None
 
 def _gateway_running(port: int) -> bool:
+    if CONTAINERIZED:
+        host = os.environ.get("IBKR_HOST", "127.0.0.1")
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                return True
+        except OSError:
+            return False
     try:
         r = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True)
         return bool(r.stdout.strip())

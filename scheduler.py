@@ -17,9 +17,18 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-PST        = ZoneInfo("America/Los_Angeles")
-STATE_FILE = "state.json"
-SETTINGS_FILE = "settings.json"
+PST             = ZoneInfo("America/Los_Angeles")
+STATE_FILE      = "state.json"
+SETTINGS_FILE   = "settings.json"
+HEARTBEAT_FILE  = "scheduler_heartbeat.json"
+
+
+def _write_heartbeat():
+    try:
+        with open(HEARTBEAT_FILE, "w") as f:
+            json.dump({"timestamp": datetime.now(PST).isoformat()}, f)
+    except Exception:
+        pass
 
 
 def _new_loop():
@@ -323,7 +332,13 @@ def main():
         trigger="cron", day_of_week="tue,wed,thu", hour=9, minute=0,
         id="daily_risk_monitor", name="Daily Risk Monitor"
     )
+    scheduler.add_job(
+        _write_heartbeat,
+        trigger="interval", seconds=60,
+        id="heartbeat", name="Scheduler Heartbeat"
+    )
 
+    _write_heartbeat()
     log.info("\n" + "=" * 65)
     log.info("🗓️  YOU ROCK FUND SCHEDULER — Running")
     log.info(f"   Current time : {datetime.now(PST).strftime('%A %Y-%m-%d %H:%M %Z')}")

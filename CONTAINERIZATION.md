@@ -303,6 +303,27 @@ scheduler.run_pipeline()
 PY
 ```
 
+## Restoring Existing Trade Data
+
+The Docker volume is fresh on a new install and contains no trade history. To carry over an existing `state.json` and `ytd_tracker.json` from the main branch, copy them into the running scheduler container after the stack is up:
+
+```bash
+docker compose --env-file .env.compose cp state.json scheduler:/data/
+docker compose --env-file .env.compose cp ytd_tracker.json scheduler:/data/
+```
+
+The entrypoint symlinks those files from `/data/` into the app directory, so the copy takes effect immediately without a container restart. Verify the data was loaded:
+
+```bash
+docker compose --env-file .env.compose exec api python - <<'PY'
+import json
+from pathlib import Path
+s = json.loads(Path("/data/state.json").read_text())
+print("positions:", len(s.get("positions", [])))
+print("wheel_holdings:", len(s.get("wheel_holdings", [])))
+PY
+```
+
 ## Sync With Upstream
 
 Keep two remotes:
