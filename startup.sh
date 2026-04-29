@@ -180,14 +180,24 @@ esac
 if   [ "$FAIL" -eq 0 ] && [ "$WARN" -eq 0 ]; then
     echo ""
     printf "  ${BOLD}${GREEN}🟢  GO — All systems ready  (%s)${NC}\n" "$DAY_CTX"
+    echo ""
+    printf "  ${BOLD}${BLUE}🌐  YRVI Dashboard: http://localhost:3000${NC}\n"
+    echo ""
+    if [ "$(uname -s)" = "Darwin" ]; then
+        open http://localhost:3000
+    else
+        echo "  Open http://localhost:3000"
+    fi
 elif [ "$FAIL" -eq 0 ]; then
     echo ""
     printf "  ${BOLD}${YELLOW}🟡  GO with warnings — review items above  (%s)${NC}\n" "$DAY_CTX"
+    echo ""
+    printf "  ${BOLD}${BLUE}🌐  YRVI Dashboard: http://localhost:3000${NC}\n"
+    echo ""
 else
     echo ""
     printf "  ${BOLD}${RED}🔴  NO-GO — resolve %d critical issue(s)  (%s)${NC}\n" "$FAIL" "$DAY_CTX"
+    echo ""
+    printf "  ${BOLD}${BLUE}🌐  YRVI Dashboard: http://localhost:3000${NC}\n"
+    echo ""
 fi
-
-echo ""
-printf "  ${BOLD}${BLUE}🌐  YRVI Dashboard: http://localhost:3000${NC}\n"
-echo ""
