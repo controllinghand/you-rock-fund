@@ -114,27 +114,34 @@ launchctl bootstrap "gui/$(id -u)" "$DOCKER_PLIST_DEST" 2>/dev/null || \
 
 ok "com.yourockfund.docker installed — containers will auto-start on every login"
 
-# ── Step 5: Install app to /Applications ─────────────────────
+# ── Step 5: Install Desktop app (macOS only) ─────────────────
 echo ""
 echo "${BOLD}Step 5 / 5   Install Desktop app${NC}"
 echo "──────────────────────────────────────────────────────"
 
-APP_DEST="/Applications/YRVI Startup.app"
+OS=$(uname -s)
 
-rm -rf "$APP_DEST"
-cp -R "$PROJ/assets/app_template/" "$APP_DEST"
-mkdir -p "$APP_DEST/Contents/Resources"
-cp "$PROJ/assets/YRVI.icns" "$APP_DEST/Contents/Resources/YRVI.icns"
-sed -i '' "s|__PROJ__|$PROJ|g" "$APP_DEST/Contents/MacOS/yrvi_startup"
-chmod +x "$APP_DEST/Contents/MacOS/yrvi_startup"
-xattr -dr com.apple.quarantine "$APP_DEST" 2>/dev/null || true
-defaults write com.apple.dock persistent-apps -array-add \
-    "<dict><key>tile-data</key><dict><key>file-data</key><dict>\
+if [ "$OS" = "Darwin" ]; then
+    APP_DEST="/Applications/YRVI Startup.app"
+
+    rm -rf "$APP_DEST"
+    cp -R "$PROJ/assets/app_template/" "$APP_DEST"
+    mkdir -p "$APP_DEST/Contents/Resources"
+    cp "$PROJ/assets/YRVI.icns" "$APP_DEST/Contents/Resources/YRVI.icns"
+    sed -i '' "s|__PROJ__|$PROJ|g" "$APP_DEST/Contents/MacOS/yrvi_startup"
+    chmod +x "$APP_DEST/Contents/MacOS/yrvi_startup"
+    xattr -dr com.apple.quarantine "$APP_DEST" 2>/dev/null || true
+    defaults write com.apple.dock persistent-apps -array-add \
+        "<dict><key>tile-data</key><dict><key>file-data</key><dict>\
 <key>_CFURLString</key><string>/Applications/YRVI Startup.app</string>\
 <key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
-killall Dock 2>/dev/null || true
+    killall Dock 2>/dev/null || true
 
-ok "YRVI Startup app installed on Desktop"
+    ok "YRVI Startup app installed"
+else
+    info "Desktop app is macOS only"
+    info "  Access dashboard at http://localhost:3000"
+fi
 
 # ── Summary ───────────────────────────────────────────────────
 echo ""
