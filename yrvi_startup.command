@@ -1,8 +1,6 @@
 #!/bin/bash
-PROJ=$(cd "$(dirname "$0")" && pwd)
-
-source "$PROJ/venv/bin/activate"
-bash "$PROJ/startup.sh"
+cd ~/you_rock_fund
+bash startup.sh
 
 echo ''
 echo 'Press any key to close...'

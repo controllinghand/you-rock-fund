@@ -12,6 +12,7 @@
 #    3. Builds and starts all 4 containers (ib_gateway, api, scheduler, web)
 #    4. Installs com.yourockfund.docker launchd service so containers
 #       start automatically on every login / reboot
+#    5. Installs YRVI Startup.app on the Desktop
 # ─────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -38,7 +39,7 @@ printf "${NC}"
 echo ""
 
 # ── Step 1: Check Docker is running ──────────────────────────
-echo "${BOLD}Step 1 / 4   Check Docker${NC}"
+echo "${BOLD}Step 1 / 5   Check Docker${NC}"
 echo "──────────────────────────────────────────────────────"
 
 if ! command -v docker &>/dev/null; then
@@ -63,7 +64,7 @@ echo ""
 
 # ── Step 2: Validate secrets and config ───────────────────────
 echo ""
-echo "${BOLD}Step 2 / 4   Validate secrets and config${NC}"
+echo "${BOLD}Step 2 / 5   Validate secrets and config${NC}"
 echo "──────────────────────────────────────────────────────"
 
 cd "$PROJ"
@@ -77,7 +78,7 @@ ok "Secrets and config OK"
 
 # ── Step 3: Build and start containers ───────────────────────
 echo ""
-echo "${BOLD}Step 3 / 4   Build and start all 4 containers${NC}"
+echo "${BOLD}Step 3 / 5   Build and start all 4 containers${NC}"
 echo "──────────────────────────────────────────────────────"
 
 info "Building images and starting ib_gateway, api, scheduler, web..."
@@ -98,7 +99,7 @@ fi
 
 # ── Step 4: Install Docker auto-start on login ────────────────
 echo ""
-echo "${BOLD}Step 4 / 4   Install Docker auto-start on login${NC}"
+echo "${BOLD}Step 4 / 5   Install Docker auto-start on login${NC}"
 echo "──────────────────────────────────────────────────────"
 
 mkdir -p "$HOME/Library/LaunchAgents"
@@ -112,6 +113,24 @@ launchctl bootstrap "gui/$(id -u)" "$DOCKER_PLIST_DEST" 2>/dev/null || \
     launchctl load "$DOCKER_PLIST_DEST" 2>/dev/null || true
 
 ok "com.yourockfund.docker installed — containers will auto-start on every login"
+
+# ── Step 5: Install Desktop app ───────────────────────────────
+echo ""
+echo "${BOLD}Step 5 / 5   Install Desktop app${NC}"
+echo "──────────────────────────────────────────────────────"
+
+APP_DEST="$HOME/Desktop/YRVI Startup.app"
+
+rm -rf "$APP_DEST"
+cp -R "$PROJ/assets/app_template/" "$APP_DEST"
+mkdir -p "$APP_DEST/Contents/Resources"
+cp "$PROJ/assets/YRVI.icns" "$APP_DEST/Contents/Resources/YRVI.icns"
+sed -i '' "s|__PROJ__|$PROJ|g" "$APP_DEST/Contents/MacOS/yrvi_startup"
+chmod +x "$APP_DEST/Contents/MacOS/yrvi_startup"
+xattr -dr com.apple.quarantine "$APP_DEST" 2>/dev/null || true
+killall Dock 2>/dev/null || true
+
+ok "YRVI Startup app installed on Desktop"
 
 # ── Summary ───────────────────────────────────────────────────
 echo ""
