@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 
-const VERSION = '1.0.0-beta'
+const VERSION = __APP_VERSION__
 import { LayoutDashboard, TrendingUp, Calendar, History, Settings } from 'lucide-react'
 import StatusBar from './components/StatusBar.jsx'
 import Dashboard from './pages/Dashboard.jsx'
