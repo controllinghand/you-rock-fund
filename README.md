@@ -68,9 +68,11 @@ New to IBKR? See the **[IBKR Account Setup Guide](IBKR_SETUP_GUIDE.md)** for a c
 
 > **You Rock Club members:** If you intend to trade live on IBKR, you will need a Mac Mini (or any always-on Mac). Paper trading can be done on any Mac. Windows is supported for paper trading only.
 
+> 📖 **You Rock Club Mac Mini Setup Guide:** See [MAC_MINI_SETUP.md](./MAC_MINI_SETUP.md) for a complete step-by-step walkthrough from unboxing to first trade.
+
 ## Prerequisites
 
-- [Rancher Desktop](https://rancherdesktop.io) or Docker Desktop (dockerd/moby engine)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (recommended for Mac) or [Rancher Desktop](https://rancherdesktop.io) (alternative)
 - Access to the You Rock Club screener API (Render)
 
 ### Hardware Requirements
