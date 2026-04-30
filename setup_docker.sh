@@ -1,4 +1,19 @@
 #!/bin/bash
+
+LOCKFILE="$HOME/.yrvi_setup.lock"
+if [ -f "$LOCKFILE" ]; then
+    LOCK_AGE=$(( $(date +%s) - $(date -r "$LOCKFILE" +%s) ))
+    if [ "$LOCK_AGE" -lt 600 ]; then
+        echo "$(date): Another instance is running (lock age: ${LOCK_AGE}s) — exiting"
+        exit 0
+    else
+        echo "$(date): Stale lock found (${LOCK_AGE}s old) — removing and proceeding"
+        rm -f "$LOCKFILE"
+    fi
+fi
+touch "$LOCKFILE"
+trap 'rm -f "$LOCKFILE"' EXIT
+
 # ─────────────────────────────────────────────────────────────
 #  Docker Setup — You Rock Volatility Income Fund
 #  Containerized branch: Docker replaces launchd/IBC
@@ -24,18 +39,21 @@ set -euo pipefail
 
 usage() {
     echo ""
-    echo "  Usage: bash setup_docker.sh --paper | --live"
+    echo "  Usage: setup_docker.sh --paper|--live [--keep-secrets]"
     echo ""
-    echo "    --paper    use paper trading secrets (IBKR paper account)"
-    echo "    --live     use live trading secrets  (IBKR live account)"
+    echo "    --paper          use paper trading secrets (IBKR paper account)"
+    echo "    --live           use live trading secrets  (IBKR live account)"
+    echo "    --keep-secrets   skip deletion of plaintext secret files after launch"
     echo ""
 }
 
 TRADING_MODE=""
+KEEP_SECRETS=false
 for arg in "$@"; do
     case "$arg" in
-        --paper)  TRADING_MODE="paper" ;;
-        --live)   TRADING_MODE="live"  ;;
+        --paper)         TRADING_MODE="paper" ;;
+        --live)          TRADING_MODE="live"  ;;
+        --keep-secrets)  KEEP_SECRETS=true    ;;
         --help|-h) usage; exit 0 ;;
         *) printf "Unknown flag: %s\n" "$arg" >&2; usage; exit 1 ;;
     esac
@@ -246,29 +264,18 @@ info "Building images and starting ib_gateway, api, scheduler, web..."
 
 if docker compose --env-file .env.compose up -d --build; then
 
-    # ── Offer to wipe plaintext secret files ─────────────────
-    echo ""
-    warn "docker/secrets/ files contain plaintext passwords."
-    printf "  Delete secret files now? (recommended) [Y/n] "
-    read -r CONFIRM_DELETE </dev/tty || CONFIRM_DELETE="Y"
-    case "${CONFIRM_DELETE:-Y}" in
-        [Yy]|"")
-            if [ ${#WRITTEN_SECRET_FILES[@]} -gt 0 ]; then
-                for f in "${WRITTEN_SECRET_FILES[@]}"; do
-                    rm -f "$f"
-                done
-            fi
-            ok "Secret files wiped — passwords remain safely in macOS Keychain"
-            ;;
-        *)
-            warn "Secret files NOT deleted. Remove them manually when done:"
-            if [ ${#WRITTEN_SECRET_FILES[@]} -gt 0 ]; then
-                for f in "${WRITTEN_SECRET_FILES[@]}"; do
-                    echo "    rm $PROJ/$f"
-                done
-            fi
-            ;;
-    esac
+    # ── Wipe plaintext secret files ───────────────────────────
+    if [ "$KEEP_SECRETS" = true ]; then
+        warn "--keep-secrets: secret files left on disk in docker/secrets/"
+        warn "Delete manually when done: rm docker/secrets/*"
+    else
+        if [ ${#WRITTEN_SECRET_FILES[@]} -gt 0 ]; then
+            for f in "${WRITTEN_SECRET_FILES[@]}"; do
+                rm -f "$f"
+            done
+        fi
+        ok "Secret files wiped — passwords remain safely in macOS Keychain"
+    fi
 
     sleep 3
     RUNNING=$(docker compose --env-file .env.compose ps 2>/dev/null \
@@ -313,21 +320,18 @@ echo ""
 echo "${BOLD}Step 5 / 6   Install Docker auto-start on login${NC}"
 echo "──────────────────────────────────────────────────────"
 
-if launchctl list "$DOCKER_LABEL" &>/dev/null 2>&1; then
-    ok "com.yourockfund.docker already installed — skipping"
-else
-    mkdir -p "$HOME/Library/LaunchAgents"
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 
-    launchctl bootout "gui/$(id -u)/$DOCKER_LABEL" 2>/dev/null || true
-    launchctl unload "$DOCKER_PLIST_DEST" 2>/dev/null || true
+sed -e "s|__PROJ__|$PROJ|g" -e "s|__HOME__|$HOME|g" "$DOCKER_PLIST_SRC" > "$DOCKER_PLIST_DEST"
 
-    sed -e "s|__PROJ__|$PROJ|g" "$DOCKER_PLIST_SRC" > "$DOCKER_PLIST_DEST"
-
+if [ -t 0 ]; then
     launchctl bootstrap "gui/$(id -u)" "$DOCKER_PLIST_DEST" 2>/dev/null || \
         launchctl load "$DOCKER_PLIST_DEST" 2>/dev/null || true
-
     ok "com.yourockfund.docker installed — containers will auto-start on every login"
+else
+    ok "com.yourockfund.docker already active (launched by launchd — skipping re-register)"
 fi
+info "  Reboot log: cat ~/Library/Logs/yrvi-autostart.log"
 
 # ── Step 6: Install Desktop app (macOS only) ─────────────────
 echo ""

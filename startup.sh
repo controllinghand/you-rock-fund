@@ -76,8 +76,8 @@ else
 
     if [ "$ALL_UP" = "false" ]; then
         echo ""
-        printf "  ${YELLOW}ℹ️${NC}   Bringing up stopped containers...\n"
-        docker compose --env-file .env.compose up -d 2>/dev/null || true
+        printf "  ${YELLOW}ℹ️${NC}   Running setup_docker.sh --paper to pull secrets and restart containers...\n"
+        bash "$PROJ/setup_docker.sh" --paper
         echo ""
     fi
 fi

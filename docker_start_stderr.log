@@ -41,3 +41,4 @@ time="2026-04-29T17:09:37-07:00" level=warning msg="No services to build"
  Container yrvi-scheduler-1 Running 
  Container yrvi-api-1 Running 
  Container yrvi-web-1 Running 
+unable to get image 'yrvi-api:local': Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?

@@ -6,15 +6,19 @@
     <key>Label</key>
     <string>com.yourockfund.docker</string>
 
-    <!-- Runs docker compose up -d on every login so containers restart after a reboot. -->
-    <!-- setup_docker.sh installs this to ~/Library/LaunchAgents/ with __PROJ__ substituted. -->
+    <!-- Runs setup_docker.sh --paper on every login: pulls secrets from Keychain,
+         writes ephemeral docker/secrets/ files, starts all 4 containers, then
+         deletes the secret files. The 30-second sleep gives Rancher Desktop time
+         to fully start before the script runs. -->
+    <!-- setup_docker.sh installs this to ~/Library/LaunchAgents/ with __PROJ__
+         and __HOME__ substituted. -->
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>-l</string>
         <string>-c</string>
-        <string>docker compose --env-file .env.compose up -d</string>
+        <string>sleep 60 &amp;&amp; chmod +x __PROJ__/setup_docker.sh &amp;&amp; exec __PROJ__/setup_docker.sh --paper</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -30,13 +34,16 @@
     <key>RunAtLoad</key>
     <true/>
 
+    <key>ThrottleInterval</key>
+    <integer>300</integer>
+
     <key>KeepAlive</key>
     <false/>
 
     <key>StandardOutPath</key>
-    <string>__PROJ__/docker_start_stdout.log</string>
+    <string>__HOME__/Library/Logs/yrvi-autostart.log</string>
 
     <key>StandardErrorPath</key>
-    <string>__PROJ__/docker_start_stderr.log</string>
+    <string>__HOME__/Library/Logs/yrvi-autostart.log</string>
 </dict>
 </plist>
