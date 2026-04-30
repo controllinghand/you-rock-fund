@@ -1,6 +1,6 @@
 # You Rock Volatility Income Fund (YRVI)
 
-![Version](https://img.shields.io/badge/version-1.0.0--beta-blue)
+![Version](https://img.shields.io/badge/version-1.1.0--beta-blue)
 
 An automated Python algorithmic options trading system that generates weekly income through the complete wheel strategy — selling cash-secured puts (CSPs), managing assignments with covered calls (CCs), and enforcing automatic stop losses — all running 24/7 on a Mac Mini with zero manual intervention.
 
@@ -66,10 +66,21 @@ Each cycle generates income whether the option expires or gets exercised.
 
 New to IBKR? See the **[IBKR Account Setup Guide](IBKR_SETUP_GUIDE.md)** for a complete walkthrough — from creating your account to paper trading your first week.
 
+> **You Rock Club members:** If you intend to trade live on IBKR, you will need a Mac Mini (or any always-on Mac). Paper trading can be done on any Mac. Windows is supported for paper trading only.
+
 ## Prerequisites
 
 - [Rancher Desktop](https://rancherdesktop.io) or Docker Desktop (dockerd/moby engine)
 - Access to the You Rock Club screener API (Render)
+
+### Hardware Requirements
+
+| Mode | Hardware | OS Required | Secrets Method |
+|------|----------|-------------|----------------|
+| Paper trading | Any Mac (Intel or Apple Silicon) | macOS | macOS Keychain |
+| Live trading | Mac Mini (recommended) | macOS only | macOS Keychain |
+
+> **Windows** is supported for development and paper trading only (see `setup_windows.ps1`). Live trading requires macOS due to Keychain integration.
 
 ### IB Gateway port reference
 
@@ -85,12 +96,52 @@ These are the ports the Python containers use to reach IB Gateway inside the Com
 ```bash
 git clone https://github.com/controllinghand/you_rock_fund.git you_rock_fund
 cd you_rock_fund
-bash setup_docker.sh
 ```
+
+#### macOS Setup (Paper)
+
+```bash
+./setup_docker.sh --paper
+```
+
+On first run, you will be prompted for:
+- Your IBKR paper account password (stored in macOS Keychain as `YRVI_TWS_PAPER`)
+- Your Render API secret (stored in macOS Keychain as `YRVI_RENDER`)
+
+On subsequent runs, secrets are pulled from Keychain silently — no re-entry needed.
+
+#### macOS Setup (Live)
+
+```bash
+./setup_docker.sh --live
+```
+
+Requires a Mac Mini or equivalent always-on Mac. Live credentials are stored separately in Keychain (`YRVI_TWS_LIVE`) and never shared with paper mode.
+
+#### Verifying Keychain storage
+
+Open **Keychain Access.app** and search for `YRVI` to confirm your secrets are stored. You should see entries for `YRVI_TWS_PAPER` (or `YRVI_TWS_LIVE`) and `YRVI_RENDER`.
+
+#### Rotating / updating a secret
+
+If you need to update a stored secret (e.g. changed your IBKR password):
+1. Open Keychain Access.app
+2. Search for the entry (e.g. `YRVI_TWS_PAPER`)
+3. Delete it
+4. Re-run `./setup_docker.sh --paper` — you will be prompted for the new value
 
 `setup_docker.sh` validates your config, builds all four containers (`ib_gateway`, `api`, `scheduler`, `web`), starts the stack, and installs a login item so containers restart automatically after a reboot.
 
-See **[CONTAINERIZATION.md](CONTAINERIZATION.md)** for the full setup guide — secrets, credentials, 2FA recovery, and troubleshooting.
+See **[CONTAINERIZATION.md](CONTAINERIZATION.md)** for the full setup guide — credentials, 2FA recovery, and troubleshooting.
+
+## Security
+
+### Secret Security
+
+- Secrets are stored in **macOS Keychain**, encrypted at rest and tied to your macOS login.
+- Files in `docker/secrets/` are ephemeral — written at launch time and deleted automatically after containers start.
+- `docker/secrets/` is in `.gitignore` and must never be committed.
+- **Windows users (paper only):** secrets remain as files in `docker/secrets/` — treat them as sensitive and do not commit them.
 
 ## Mac Startup (after any reboot)
 
@@ -335,10 +386,21 @@ cat state.json               # Full system state
 
 ## Version History
 
+### v1.1.0-beta (April 2026)
+- macOS Keychain secrets management (replaces manual docker/secrets/ file creation)
+- setup_docker.sh --paper / --live mode flags (required, replaces bare invocation)
+- Password double-entry confirmation with character count on first run
+- Ephemeral secret files — written at launch, deleted after containers start
+- Secret rotation via Keychain Access.app (delete entry, re-run script)
+- Steps 5 & 6 idempotent — login item and Desktop app skip if already installed
+- Hardware tier policy: Mac Mini required for live trading, Windows scoped to paper only
+- README: Hardware Requirements table, Security section, You Rock Club onboarding note
+- Versioning policy: minor bump for new capabilities, patch for field fixes, beta drops when first live Mac Mini member completes a full week unassisted
+
 ### v1.0.0-beta (April 2026)
 - Docker containerization (replaces launchd)
 - Cross-platform: Mac Intel/ARM + Windows
-- Secrets management via Docker secrets
+- Secrets management via macOS Keychain (ephemeral docker/secrets/ files)
 - Auto-start via Docker login plist
 - nginx serving React dashboard
 - Socket-based health checks

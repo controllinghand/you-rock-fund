@@ -11,10 +11,13 @@ Download from [rancherdesktop.io](https://rancherdesktop.io) and start it. Enabl
 >
 > 1. Open Rancher Desktop
 > 2. Click **Preferences**
-> 3. Under **Application**, check:
->    - ✅ **Automatically start at login**
->    - ✅ **Start in background**
-> 4. Click **Apply**
+> 3. Click **Application** in the left sidebar
+> 4. Click the **Behavior** tab
+> 5. Under **Startup**: check ✅ **Automatically start at login**
+> 6. Under **Background**: check ✅ **Start in the background**
+> 7. Click **Apply**
+>
+> **Leave "Quit when closing application window" unchecked** — closing the Rancher Desktop window should not stop Docker.
 
 **Step 2 — Clone the repo**
 ```bash
@@ -63,6 +66,171 @@ docker compose --env-file .env.compose logs -f ib_gateway
 Look for `Login has completed` in the output. The dashboard API status at `http://localhost:8000/api/status` will show `"ibkr_connected": true` when ready.
 
 > **Note:** `setup_ibc.sh` and the launchd plist files in this repo are for the non-containerized branch only. Docker replaces launchd on this branch — do not run `setup_ibc.sh`.
+
+---
+
+## Windows Installation
+
+### Prerequisites
+
+Install both tools before cloning or running anything.
+
+**1. Rancher Desktop**
+
+Download from [rancherdesktop.io](https://rancherdesktop.io) and run the installer.
+
+After installation:
+
+1. Open Rancher Desktop → **Preferences → Container Engine**.
+2. Select **dockerd (moby)** — not containerd. The `docker compose` V2 plugin is only bundled with the moby engine.
+3. Click **Apply** and wait for the status indicator to show **Running**.
+4. Configure Rancher Desktop to auto-start so containers come back up automatically after a reboot:
+   1. Open Rancher Desktop
+   2. Click **Preferences**
+   3. Click **Application** in the left sidebar
+   4. Click the **Behavior** tab
+   5. Under **Startup**: check ✅ **Automatically start at login**
+   6. Under **Background**: check ✅ **Start in the background**
+   7. Click **Apply**
+
+   **Leave "Quit when closing application window" unchecked** — closing the Rancher Desktop window should not stop Docker.
+
+   Without **Automatically start at login** and **Start in the background** both checked, Docker will not be running when Windows starts and the YRVI containers will not come up after a reboot.
+
+**2. Git for Windows**
+
+Download from [git-scm.com/download/win](https://git-scm.com/download/win) and run the installer.
+
+When the installer asks about **Adjusting your PATH environment**, select:
+
+> **Git from the command line and also from 3rd-party software**
+
+This is the critical choice — without it, `git` will not be available in PowerShell. The other installer defaults are fine.
+
+After installation, close and reopen PowerShell before continuing.
+
+### Verify Before You Start
+
+Open PowerShell and run both checks. Both must return a version number before proceeding — if either fails, refer back to the prerequisites above.
+
+```powershell
+git --version
+docker --version
+```
+
+Expected output:
+
+```
+git version 2.x.x.windows.x
+Docker version 27.x.x, build xxxxxxx
+```
+
+### Clone the Repo
+
+> ⚠️ Clone into the Windows filesystem (`C:\Users\...`), not a WSL2 path (`\\wsl$\...`). Docker bind-mounts from WSL2 paths silently fail.
+
+```powershell
+cd C:\Users\$env:USERNAME
+git clone https://github.com/controllinghand/you_rock_fund.git you_rock_fund
+cd you_rock_fund
+```
+
+### Run the Setup Script
+
+Open **PowerShell** (not WSL2 bash) in the repo root and run:
+
+```powershell
+.\setup_windows.ps1
+```
+
+The script runs five steps:
+
+| Step | What it does |
+|---|---|
+| 1 — Preflight | Verifies PowerShell, docker, docker compose V2, repo root, and warns if running from a WSL2 path |
+| 2 — Env file | Copies `.env.compose.example` → `.env.compose` if not present, then opens it in Notepad for you to fill in `ACCOUNT_PAPER` and `TWS_USERID_PAPER` |
+| 3 — Secrets | Creates `docker\secrets\` and prompts securely for `tws_password_paper` and `render_secret` |
+| 4 — Bind-mount | Optionally copies `docker-compose.override.yml.example` and creates `docker\data\` so runtime files are visible on the Windows filesystem |
+| 5 — Containers | Runs `docker compose --env-file .env.compose up -d --build`, shows live output, prints a GO/NO-GO status table, then checks the `dry_run` safety default |
+
+Add `-DryRun` to walk through all steps without running any docker commands:
+
+```powershell
+.\setup_windows.ps1 -DryRun
+```
+
+### After Setup
+
+Open the dashboard at `http://localhost:3000`. IB Gateway takes 30–90 seconds to log in — watch for `Login has completed` in the log:
+
+```powershell
+docker compose --env-file .env.compose logs -f ib_gateway
+```
+
+### Runtime Files and Logs
+
+By default, runtime logs and data (state.json, trade_log.txt, scheduler_log.txt, etc.) live inside a Docker named volume and are accessible via `docker compose logs` or `docker compose exec`. The setup script offers to enable a **bind-mount override** that makes those same files visible under `docker\data\` on your Windows filesystem, where you can open them directly in Explorer, Notepad, or VS Code.
+
+To enable it manually (if you skipped the prompt during setup):
+
+```powershell
+copy docker-compose.override.yml.example docker-compose.override.yml
+mkdir docker\data
+docker compose --env-file .env.compose up -d
+```
+
+### Safety Default: dry_run
+
+On a fresh data volume, `settings.json` is initialized from `settings_default.json` with `dry_run = true`. This prevents YRVI from submitting any orders to IBKR until you consciously enable trading. The setup script checks this automatically, but you can verify it any time:
+
+```powershell
+curl http://127.0.0.1:8000/api/settings
+```
+
+Expected output for a safe new install:
+
+```json
+{ "dry_run": true, "trading_mode": "paper", "ibkr_port": 4004 }
+```
+
+When you are ready to place paper trades — after confirming `ibkr_connected: true` in `/api/status` — disable dry-run:
+
+```powershell
+curl -X POST http://127.0.0.1:3000/api/settings `
+     -H "Content-Type: application/json" `
+     -d '{"dry_run":false}'
+```
+
+Do not disable `dry_run` until you have confirmed `trading_mode: paper` and that IB Gateway is connected to the paper account, not a live account.
+
+### VNC on Windows (informational — most users won't need this)
+
+Most first-time IB Gateway logins complete automatically without any VNC interaction. VNC is only needed if IBKR presents a 2FA challenge, a device-authorization dialog, or a credential error during the initial login.
+
+Windows does not have a built-in VNC viewer. If you do need VNC:
+
+1. Install [RealVNC Viewer](https://www.realvnc.com/en/connect/download/viewer/) (free).
+2. Set `VNC_SERVER_PASSWORD` in `.env.compose`.
+3. Recreate the gateway container:
+
+   ```powershell
+   docker compose --env-file .env.compose up -d --force-recreate ib_gateway
+   ```
+
+4. Connect RealVNC Viewer to `localhost:5900` using the password from step 2.
+5. Complete the IBKR dialog in the VNC session.
+
+The VNC port is bound to `127.0.0.1` only.
+
+### Windows Filesystem Reminder
+
+Always run PowerShell from `C:\Users\...`, not from a WSL2 path. You can verify your location with:
+
+```powershell
+(Get-Location).Path
+```
+
+It should start with `C:\` (or another Windows drive letter), not `\\wsl$\`.
 
 ---
 

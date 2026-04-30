@@ -1,6 +1,8 @@
 import json
 import logging
 import asyncio
+import os
+import socket
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -29,6 +31,29 @@ def _write_heartbeat():
             json.dump({"timestamp": datetime.now(PST).isoformat()}, f)
     except Exception:
         pass
+
+
+def _discord_alert(message: str) -> None:
+    """Send a plain-text Discord alert. No-ops when webhook is not configured."""
+    try:
+        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
+        if not webhook_url:
+            return
+        import requests
+        requests.post(webhook_url, json={"content": message}, timeout=5)
+    except Exception as e:
+        log.warning(f"Discord alert failed: {e}")
+
+
+def _ibkr_reachable() -> bool:
+    """Quick TCP probe: returns True if the IB Gateway API port is accepting connections."""
+    host = os.environ.get("IBKR_HOST", "127.0.0.1")
+    port = int(os.environ.get("IBKR_PORT", "4004"))
+    try:
+        with socket.create_connection((host, port), timeout=5):
+            return True
+    except OSError:
+        return False
 
 
 def _new_loop():
@@ -127,6 +152,7 @@ def run_assignment_detection():
             post_assignment_alert(new_ones)
     except Exception as e:
         log.error(f"❌ Assignment detection error: {e}", exc_info=True)
+        _discord_alert(f"🚨 **YRVI** Friday assignment detection failed: `{type(e).__name__}: {e}`")
     finally:
         loop.close()
 
@@ -174,6 +200,10 @@ def run_wheel_check_job():
     log.info("\n" + "=" * 65)
     log.info(f"🔄 MONDAY WHEEL CHECK — {now.strftime('%A %Y-%m-%d %H:%M %Z')}")
     log.info("=" * 65)
+    if not _ibkr_reachable():
+        msg = "IB Gateway unreachable before Monday wheel check — jobs will likely fail"
+        log.error(f"❌ {msg}")
+        _discord_alert(f"🚨 **YRVI** {msg}. Check gateway login / VNC port 5900.")
     try:
         from wheel_manager import run_wheel_check
         freed, skip, reserved = run_wheel_check()
@@ -181,6 +211,7 @@ def run_wheel_check_job():
                  f"reserved ${reserved:,.0f}  skip {skip or 'none'}")
     except Exception as e:
         log.error(f"❌ Wheel check error: {e}", exc_info=True)
+        _discord_alert(f"🚨 **YRVI** Monday wheel check failed: `{type(e).__name__}: {e}`")
     finally:
         loop.close()
 
@@ -193,6 +224,10 @@ def run_pipeline():
     log.info("\n" + "=" * 65)
     log.info(f"⏰ MONDAY EXECUTION — {now.strftime('%A %Y-%m-%d %H:%M %Z')}")
     log.info("=" * 65)
+    if not _ibkr_reachable():
+        msg = "IB Gateway unreachable before Monday CSP pipeline — trades will not execute"
+        log.error(f"❌ {msg}")
+        _discord_alert(f"🚨 **YRVI** {msg}. Check gateway login / VNC port 5900.")
     try:
         from screener import get_top_targets
         from position_sizer import size_all
@@ -266,6 +301,7 @@ def run_pipeline():
 
     except Exception as e:
         log.error(f"❌ Pipeline error: {e}", exc_info=True)
+        _discord_alert(f"🚨 **YRVI** Monday CSP pipeline failed: `{type(e).__name__}: {e}`")
     finally:
         loop.close()
 

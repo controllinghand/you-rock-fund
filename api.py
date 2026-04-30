@@ -7,6 +7,7 @@ import random
 import re
 import socket
 import subprocess
+import threading
 import time
 import traceback
 
@@ -48,6 +49,21 @@ ANNUAL_TARGET = 100_000
 CONTAINERIZED = os.environ.get("YRVI_CONTAINERIZED", "0") == "1"
 HEARTBEAT_FILE = BASE_DIR / "scheduler_heartbeat.json"
 # clientId 100-999 used at runtime (random per call) — never conflicts with trader(1) wheel(2) risk(3)
+
+# ── Watchdog ───────────────────────────────────────────────────
+# Tracks how long each subsystem has been in a failed state so we
+# can alert only after a persistent outage (not a transient hiccup).
+_watchdog_state: dict = {
+    "gateway_down_since":   None,
+    "ibkr_down_since":      None,
+    "scheduler_down_since": None,
+    "last_gateway_alert":   None,
+    "last_ibkr_alert":      None,
+    "last_scheduler_alert": None,
+}
+WATCHDOG_INTERVAL = 300   # seconds between checks
+ALERT_THRESHOLD   = 600   # seconds a failure must persist before we alert
+ALERT_REPEAT      = 3600  # seconds between repeated alerts for the same issue
 
 app = FastAPI(title="YRVI Dashboard API")
 app.add_middleware(
@@ -148,8 +164,141 @@ def _restart_ibgateway() -> None:
         capture_output=True, text=True, timeout=10,
     )
 
+# ── Watchdog helpers ───────────────────────────────────────────
+
+def _send_discord_alert(message: str) -> None:
+    """Post a plain-text message to the main Discord webhook. No-ops if not configured."""
+    try:
+        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
+        if not webhook_url:
+            return
+        import requests as req
+        req.post(webhook_url, json={"content": message}, timeout=5)
+    except Exception as e:
+        print(f"[api/watchdog] Discord alert failed: {e}")
+
+
+def _watchdog_check() -> None:
+    """Check gateway and scheduler health; send Discord alerts on persistent failures."""
+    now = datetime.now(PST)
+    settings = load_settings()
+    port = settings.get("ibkr_port", 4002)
+
+    # ── IB Gateway port reachability ─────────────────────────────
+    gw_up = _gateway_running(port)
+    if not gw_up:
+        if _watchdog_state["gateway_down_since"] is None:
+            _watchdog_state["gateway_down_since"] = now
+        down_sec = (now - _watchdog_state["gateway_down_since"]).total_seconds()
+        last = _watchdog_state["last_gateway_alert"]
+        if down_sec >= ALERT_THRESHOLD and (
+                last is None or (now - last).total_seconds() >= ALERT_REPEAT):
+            _watchdog_state["last_gateway_alert"] = now
+            host = os.environ.get("IBKR_HOST", "ib_gateway")
+            _send_discord_alert(
+                f"🚨 **YRVI** IB Gateway API port unreachable for {int(down_sec / 60)} min "
+                f"(`{host}:{port}`). Gateway may not have logged in or is stuck on a dialog. "
+                f"VNC available on host port 5900."
+            )
+    else:
+        if _watchdog_state["gateway_down_since"] is not None:
+            down_sec = (now - _watchdog_state["gateway_down_since"]).total_seconds()
+            _send_discord_alert(
+                f"✅ **YRVI** IB Gateway port is reachable again "
+                f"(was down {int(down_sec / 60)} min)."
+            )
+        _watchdog_state["gateway_down_since"] = None
+        _watchdog_state["last_gateway_alert"] = None
+
+    # ── IBKR API connection (only when gateway port is up) ────────
+    # Port open but ib_insync failing → gateway logged in but API broken (Scenario 3)
+    # or stuck on an unexpected dialog that kept the port open (Scenario 2 edge case).
+    if gw_up:
+        ibkr = _get_ibkr_data(settings)
+        if not ibkr["connected"]:
+            if _watchdog_state["ibkr_down_since"] is None:
+                _watchdog_state["ibkr_down_since"] = now
+            down_sec = (now - _watchdog_state["ibkr_down_since"]).total_seconds()
+            last = _watchdog_state["last_ibkr_alert"]
+            if down_sec >= ALERT_THRESHOLD and (
+                    last is None or (now - last).total_seconds() >= ALERT_REPEAT):
+                _watchdog_state["last_ibkr_alert"] = now
+                err = ibkr.get("error") or "unknown error"
+                _send_discord_alert(
+                    f"🚨 **YRVI** IB Gateway port is open but IBKR API connection failed "
+                    f"for {int(down_sec / 60)} min. Error: `{err}`. "
+                    f"Gateway may be frozen on a 2FA or confirmation dialog. "
+                    f"VNC available on host port 5900."
+                )
+        else:
+            if _watchdog_state["ibkr_down_since"] is not None:
+                down_sec = (now - _watchdog_state["ibkr_down_since"]).total_seconds()
+                _send_discord_alert(
+                    f"✅ **YRVI** IBKR API connection restored "
+                    f"(was failing for {int(down_sec / 60)} min)."
+                )
+            _watchdog_state["ibkr_down_since"] = None
+            _watchdog_state["last_ibkr_alert"] = None
+    else:
+        # Gateway port is down — don't surface a separate IBKR alert
+        _watchdog_state["ibkr_down_since"] = None
+        _watchdog_state["last_ibkr_alert"] = None
+
+    # ── Scheduler heartbeat ───────────────────────────────────────
+    sched_ok = _scheduler_pid() is not None
+    if not sched_ok:
+        if _watchdog_state["scheduler_down_since"] is None:
+            _watchdog_state["scheduler_down_since"] = now
+        down_sec = (now - _watchdog_state["scheduler_down_since"]).total_seconds()
+        last = _watchdog_state["last_scheduler_alert"]
+        if down_sec >= ALERT_THRESHOLD and (
+                last is None or (now - last).total_seconds() >= ALERT_REPEAT):
+            _watchdog_state["last_scheduler_alert"] = now
+            action = (
+                "Run: `docker restart yrvi-scheduler`"
+                if CONTAINERIZED else
+                "Restart scheduler.py manually."
+            )
+            _send_discord_alert(
+                f"🚨 **YRVI** Scheduler heartbeat stale for {int(down_sec / 60)} min. "
+                f"Scheduled jobs may not run on time. {action}"
+            )
+    else:
+        if _watchdog_state["scheduler_down_since"] is not None:
+            down_sec = (now - _watchdog_state["scheduler_down_since"]).total_seconds()
+            _send_discord_alert(
+                f"✅ **YRVI** Scheduler heartbeat resumed "
+                f"(was stale for {int(down_sec / 60)} min)."
+            )
+        _watchdog_state["scheduler_down_since"] = None
+        _watchdog_state["last_scheduler_alert"] = None
+
+
+def _run_watchdog() -> None:
+    """Background daemon thread: poll gateway + scheduler health every 5 minutes."""
+    time.sleep(90)  # let containers finish starting before the first check
+    while True:
+        try:
+            _watchdog_check()
+        except Exception as e:
+            print(f"[api/watchdog] Unhandled error: {e}")
+        time.sleep(WATCHDOG_INTERVAL)
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    t = threading.Thread(target=_run_watchdog, daemon=True, name="yrvi-watchdog")
+    t.start()
+    print("[api] Health watchdog started")
+
+
 @app.post("/api/restart-scheduler")
 def restart_scheduler():
+    if CONTAINERIZED:
+        raise HTTPException(
+            status_code=501,
+            detail="In Docker mode use: docker restart yrvi-scheduler",
+        )
     uid = os.getuid()
     service = "com.yourockfund.scheduler"
     errors: list[str] = []
@@ -597,6 +746,11 @@ def get_version():
     version_file = BASE_DIR / "VERSION"
     version = version_file.read_text().strip() if version_file.exists() else "unknown"
     return {"version": version, "branch": "main"}
+
+@app.get("/api/health")
+def health_check():
+    """Liveness probe used by Docker healthcheck — always 200 while the process is alive."""
+    return {"status": "ok"}
 
 @app.post("/api/discord-test")
 def test_discord():
