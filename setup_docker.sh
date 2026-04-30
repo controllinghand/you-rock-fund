@@ -123,6 +123,17 @@ echo "────────────────────────�
 cd "$PROJ"
 mkdir -p docker/secrets
 
+# Create empty placeholder files for optional secrets (only if absent — never overwrite real values)
+for _placeholder in \
+    docker/secrets/discord_webhook_url \
+    docker/secrets/discord_webhook_weekly_plan \
+    docker/secrets/anthropic_api_key \
+    docker/secrets/ibkr_password_live \
+    docker/secrets/tws_password_live; do
+    [ -f "$_placeholder" ] || touch "$_placeholder"
+done
+unset _placeholder
+
 # Keychain service names (fixed — do not change without updating Keychain entries)
 KC_RENDER="YRVI_RENDER"
 if [ "$TRADING_MODE" = "paper" ]; then
