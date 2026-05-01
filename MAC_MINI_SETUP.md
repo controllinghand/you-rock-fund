@@ -18,6 +18,21 @@ This guide walks You Rock Club members through setting up a Mac Mini as a dedica
 
 ---
 
+## One-Time Setup Hardware
+
+You will need the following physical hardware to complete the initial setup. After setup is complete, you can manage the Mac Mini entirely via Screen Sharing (remote desktop) from another Mac, or via a VNC client from a Windows PC — none of this hardware is needed day-to-day.
+
+| Item | Notes |
+|------|-------|
+| Monitor with HDMI input | The Mac Mini has an HDMI port. If your monitor only has DisplayPort or VGA, you'll need an adapter. A cheap 1080p monitor works fine. |
+| HDMI cable | Usually included with monitors, otherwise ~$10 |
+| USB keyboard | Any USB or Bluetooth keyboard |
+| USB mouse | Any USB or Bluetooth mouse |
+
+> 💡 Once Screen Sharing is configured (Phase 2), you can disconnect all of this and control the Mac Mini remotely forever after — from a Mac via Finder, or from a Windows PC using a free VNC client like RealVNC Viewer.
+
+---
+
 ## Phase 1 — macOS Initial Setup
 
 When you first power on the Mac Mini, follow these decisions at each setup screen:
