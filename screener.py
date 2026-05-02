@@ -1,9 +1,6 @@
-import json
-import os
-import re
 import requests
 from datetime import datetime, timezone
-from config import RENDER_URL as URL, RENDER_SECRET as SECRET, ANTHROPIC_API_KEY
+from config import RENDER_URL as URL, RENDER_SECRET as SECRET
 
 PARAMS = {
     "secret": SECRET,
@@ -24,102 +21,16 @@ MIN_BUFFER_PRIORITY = 0.10
 MIN_DAYS_TO_EXPIRY  = 3   # Mon→Fri = 3 UTC calendar days; 4 fails Monday execution
 EARNINGS_SAFE_DAYS  = 7
 
-EARNINGS_CACHE_FILE = "earnings_cache.json"
-CACHE_TTL_DAYS      = 1
-
-
-# ── Earnings cache + web lookup ───────────────────────────────
-
-def _load_earnings_cache() -> dict:
-    try:
-        with open(EARNINGS_CACHE_FILE) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-def _save_earnings_cache(cache: dict):
-    with open(EARNINGS_CACHE_FILE, "w") as f:
-        json.dump(cache, f, indent=2)
-
-def lookup_earnings_date(ticker: str) -> int | None:
-    """
-    Returns days_to_earnings via Anthropic web search, or None if lookup fails.
-    Negative values mean earnings already passed (treated as safe by callers).
-    Results cached in earnings_cache.json for 1 day.
-    """
-    import anthropic
-
-    cache = _load_earnings_cache()
-    today = datetime.now(timezone.utc).date()
-
-    if ticker in cache:
-        entry = cache[ticker]
-        looked_up = datetime.fromisoformat(entry["looked_up"]).date()
-        if (today - looked_up).days < CACHE_TTL_DAYS:
-            earnings_date_str = entry.get("earnings_date")
-            if earnings_date_str:
-                try:
-                    earnings_date = datetime.strptime(earnings_date_str, "%Y-%m-%d").date()
-                    return (earnings_date - today).days
-                except ValueError:
-                    pass
-            return None  # cached as unknown/failed
-
-    if not ANTHROPIC_API_KEY:
-        print(f"⚠️  No ANTHROPIC_API_KEY — cannot look up earnings for {ticker}")
-        return None
-
-    try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=512,
-            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
-            messages=[{
-                "role": "user",
-                "content": (
-                    f'Search the web for "{ticker} earnings date" and tell me the next '
-                    f"upcoming earnings date for {ticker} stock. "
-                    f"Reply with only the date in YYYY-MM-DD format. "
-                    f"If you cannot determine the upcoming date, reply with 'unknown'."
-                )
-            }]
-        )
-
-        text = "".join(
-            block.text for block in response.content if hasattr(block, "text")
-        )
-
-        date_match = re.search(r"\d{4}-\d{2}-\d{2}", text)
-        if date_match:
-            earnings_date_str = date_match.group(0)
-            earnings_date = datetime.strptime(earnings_date_str, "%Y-%m-%d").date()
-            days = (earnings_date - today).days
-            cache[ticker] = {"earnings_date": earnings_date_str, "looked_up": today.isoformat()}
-            _save_earnings_cache(cache)
-            print(f"🔍 Fallback earnings lookup for {ticker} (not in screener data): {earnings_date_str} ({days} days)")
-            return days
-        else:
-            cache[ticker] = {"earnings_date": None, "looked_up": today.isoformat()}
-            _save_earnings_cache(cache)
-            return None
-
-    except Exception as e:
-        print(f"⚠️  Earnings lookup failed for {ticker}: {e}")
-        return None
-
 def _earnings_safe(r: dict) -> tuple[bool, dict]:
     """
-    Returns (is_safe, updated_row). Performs web lookup when days_to_earnings
-    is None or '?'. Unsafe = unknown/failed OR within 7 days.
-    Past earnings (days < 0) are treated as safe.
+    Returns (is_safe, row). Earnings filtering is handled server-side via
+    earnings_days_hide param; treat missing/unknown values as safe.
+    Past earnings (days < 0) are safe. Within EARNINGS_SAFE_DAYS is not.
     """
     dte_e = r.get("days_to_earnings")
     if dte_e is None or dte_e == "?":
-        dte_e = lookup_earnings_date(r["ticker"])
-        if dte_e is not None:
-            r = {**r, "days_to_earnings": dte_e}
-    if dte_e is None or (0 <= dte_e < EARNINGS_SAFE_DAYS):
+        return True, r
+    if 0 <= dte_e < EARNINGS_SAFE_DAYS:
         return False, r
     return True, r
 
