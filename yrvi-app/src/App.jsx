@@ -1,6 +1,4 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
-
-const VERSION = __APP_VERSION__
 import { LayoutDashboard, TrendingUp, Calendar, History, Settings } from 'lucide-react'
 import StatusBar from './components/StatusBar.jsx'
 import Dashboard from './pages/Dashboard.jsx'
@@ -45,10 +43,6 @@ export default function App() {
                 {label}
               </NavLink>
             ))}
-          </div>
-
-          <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-800 text-xs text-gray-400 dark:text-gray-700">
-            YRVI v{VERSION}
           </div>
         </nav>
 
