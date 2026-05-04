@@ -167,10 +167,16 @@ docker compose --env-file .env.compose logs -f ib_gateway
 docker compose --env-file .env.compose restart scheduler
 ```
 
-### Restarting Individual Containers
+### Restarting and Rebuilding Containers
 
-Use `yrvi-restart.sh` instead of plain `docker restart`. Secret files in `docker/secrets/` are ephemeral — they are wiped after containers start. A bare `docker restart` leaves those files absent, which causes IB Gateway authentication to fail on the next container start. `yrvi-restart.sh` re-injects secrets from macOS Keychain automatically before restarting.
+Both scripts re-inject secrets from macOS Keychain before operating, fixing the bind-mount error that occurs when secret files have been wiped.
 
+| Script | When to use |
+|--------|-------------|
+| `yrvi-restart.sh` | Restart existing container — same image, no rebuild (fast) |
+| `yrvi-build.sh` | Rebuild image then restart — use after code changes |
+
+**yrvi-restart.sh** — restart without rebuilding:
 ```bash
 ./scripts/yrvi-restart.sh ib_gateway --paper
 ./scripts/yrvi-restart.sh api        --paper
@@ -178,15 +184,22 @@ Use `yrvi-restart.sh` instead of plain `docker restart`. Secret files in `docker
 ./scripts/yrvi-restart.sh ib_gateway --live   # requires YRVI_ENV=live in environment
 ```
 
-**Flags:**
-- `--dry-run` — print what would happen, make no changes
-- `--keep-secrets` — leave secret files on disk after restart (same as `setup_docker.sh`)
+Flags: `--dry-run`, `--keep-secrets`
 
-**What it does:**
-1. Fetches secrets from macOS Keychain (`YRVI_TWS_PAPER` / `YRVI_TWS_LIVE` and `YRVI_RENDER`)
-2. Writes them to `docker/secrets/` (chmod 600)
-3. Runs `docker restart <container>`
-4. Polls health status every 3s — exits with an error if the container is not healthy within 60s, then wipes secret files
+**yrvi-build.sh** — rebuild image and restart:
+```bash
+./scripts/yrvi-build.sh api       --paper   # after editing api.py
+./scripts/yrvi-build.sh scheduler --paper   # after editing scheduler.py
+./scripts/yrvi-build.sh all       --paper   # rebuild full stack
+```
+
+Flags: `--dry-run`
+
+**What both scripts do:**
+1. Fetch secrets from macOS Keychain (`YRVI_TWS_PAPER` / `YRVI_TWS_LIVE` and `YRVI_RENDER`)
+2. Write them to `docker/secrets/` (chmod 600)
+3. `yrvi-restart.sh`: runs `docker restart <container>` — `yrvi-build.sh`: runs `docker compose up -d --build [container]`
+4. Poll health status every 3s (`ib_gateway` timeout: 180s; others: 60s), then wipe secret files
 
 ## Running Manually
 
