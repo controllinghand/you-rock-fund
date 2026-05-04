@@ -803,6 +803,98 @@ def get_version():
     version = version_file.read_text().strip() if version_file.exists() else "unknown"
     return {"version": version, "branch": "main"}
 
+_GITHUB_VERSION_URL = (
+    "https://raw.githubusercontent.com/controllinghand/"
+    "you_rock_fund/containerized/VERSION"
+)
+
+@app.get("/api/version/check")
+def version_check():
+    version_file = BASE_DIR / "VERSION"
+    current = version_file.read_text().strip() if version_file.exists() else "unknown"
+    try:
+        import requests as req
+        r = req.get(_GITHUB_VERSION_URL, timeout=5)
+        r.raise_for_status()
+        latest = r.text.strip()
+        return {"current": current, "latest": latest, "up_to_date": current == latest}
+    except Exception:
+        return {"current": current, "latest": None, "up_to_date": None, "error": "unavailable"}
+
+
+@app.post("/api/version/upgrade")
+def version_upgrade():
+    version_file = BASE_DIR / "VERSION"
+    current = version_file.read_text().strip() if version_file.exists() else "unknown"
+
+    # Confirm there is actually an update to apply
+    try:
+        import requests as req
+        r = req.get(_GITHUB_VERSION_URL, timeout=5)
+        r.raise_for_status()
+        latest = r.text.strip()
+    except Exception:
+        return {"success": False,
+                "output": "Could not fetch latest version from GitHub — upgrade aborted"}
+
+    if current == latest:
+        return {"success": False,
+                "output": f"Already up to date ({current}) — no upgrade needed"}
+
+    output_parts: list[str] = []
+
+    # ── Step 1: git pull ──────────────────────────────────────
+    try:
+        pull = subprocess.run(
+            ["git", "pull", "origin", "containerized"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(BASE_DIR),
+        )
+        output_parts.append(
+            f"$ git pull origin containerized\n{(pull.stdout + pull.stderr).strip()}"
+        )
+        if pull.returncode != 0:
+            return {"success": False, "output": "\n\n".join(output_parts)}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "output": "git pull timed out after 60s — upgrade aborted"}
+    except Exception as e:
+        return {"success": False, "output": f"git pull failed: {e}"}
+
+    # ── Step 2: yrvi-restart.sh ───────────────────────────────
+    # Launched via Popen (non-blocking) so this response returns before
+    # yrvi-restart.sh kills and restarts the containers (including this one).
+    restart_script = BASE_DIR / "scripts" / "yrvi-restart.sh"
+    if not restart_script.exists():
+        output_parts.append(
+            "⚠️  scripts/yrvi-restart.sh not found — run it manually from terminal to apply the update"
+        )
+        return {"success": False, "output": "\n\n".join(output_parts)}
+    if not os.access(str(restart_script), os.X_OK):
+        output_parts.append(
+            "⚠️  scripts/yrvi-restart.sh is not executable — run: bash scripts/yrvi-restart.sh"
+        )
+        return {"success": False, "output": "\n\n".join(output_parts)}
+
+    try:
+        subprocess.Popen(
+            ["bash", str(restart_script)],
+            cwd=str(BASE_DIR),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        output_parts.append(
+            "$ bash scripts/yrvi-restart.sh\n"
+            "(launched — containers restarting, polling /health to detect restart)"
+        )
+        return {"success": True, "output": "\n\n".join(output_parts)}
+    except Exception as e:
+        output_parts.append(
+            f"Failed to launch yrvi-restart.sh: {e}\nRun it manually from terminal."
+        )
+        return {"success": False, "output": "\n\n".join(output_parts)}
+
+
 @app.get("/api/health")
 def health_check():
     """Liveness probe used by Docker healthcheck — always 200 while the process is alive."""
