@@ -846,12 +846,12 @@ def version_upgrade():
     # ── Step 1: git pull ──────────────────────────────────────
     try:
         pull = subprocess.run(
-            ["git", "pull", "origin", "containerized"],
+            ["git", "pull", "origin", "main"],
             capture_output=True, text=True, timeout=60,
             cwd=str(BASE_DIR),
         )
         output_parts.append(
-            f"$ git pull origin containerized\n{(pull.stdout + pull.stderr).strip()}"
+            f"$ git pull origin main\n{(pull.stdout + pull.stderr).strip()}"
         )
         if pull.returncode != 0:
             return {"success": False, "output": "\n\n".join(output_parts)}
@@ -860,37 +860,32 @@ def version_upgrade():
     except Exception as e:
         return {"success": False, "output": f"git pull failed: {e}"}
 
-    # ── Step 2: yrvi-restart.sh ───────────────────────────────
+    # ── Step 2: yrvi-build.sh all --paper ────────────────────
     # Launched via Popen (non-blocking) so this response returns before
-    # yrvi-restart.sh kills and restarts the containers (including this one).
-    restart_script = BASE_DIR / "scripts" / "yrvi-restart.sh"
-    if not restart_script.exists():
+    # yrvi-build.sh rebuilds and restarts the containers (including this one).
+    build_script = BASE_DIR / "scripts" / "yrvi-build.sh"
+    if not build_script.exists():
         output_parts.append(
-            "⚠️  scripts/yrvi-restart.sh not found — run it manually from terminal to apply the update"
-        )
-        return {"success": False, "output": "\n\n".join(output_parts)}
-    if not os.access(str(restart_script), os.X_OK):
-        output_parts.append(
-            "⚠️  scripts/yrvi-restart.sh is not executable — run: bash scripts/yrvi-restart.sh"
+            "scripts/yrvi-build.sh not found — run manually from terminal"
         )
         return {"success": False, "output": "\n\n".join(output_parts)}
 
     try:
         subprocess.Popen(
-            ["bash", str(restart_script)],
+            ["bash", str(build_script), "all", "--paper"],
             cwd=str(BASE_DIR),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
         output_parts.append(
-            "$ bash scripts/yrvi-restart.sh\n"
-            "(launched — containers restarting, polling /health to detect restart)"
+            "$ bash scripts/yrvi-build.sh all --paper\n"
+            "(launched — containers rebuilding and restarting, polling /health to detect restart)"
         )
         return {"success": True, "output": "\n\n".join(output_parts)}
     except Exception as e:
         output_parts.append(
-            f"Failed to launch yrvi-restart.sh: {e}\nRun it manually from terminal."
+            f"Failed to launch yrvi-build.sh: {e}\nRun manually from terminal."
         )
         return {"success": False, "output": "\n\n".join(output_parts)}
 
