@@ -167,6 +167,27 @@ docker compose --env-file .env.compose logs -f ib_gateway
 docker compose --env-file .env.compose restart scheduler
 ```
 
+### Restarting Individual Containers
+
+Use `yrvi-restart.sh` instead of plain `docker restart`. Secret files in `docker/secrets/` are ephemeral — they are wiped after containers start. A bare `docker restart` leaves those files absent, which causes IB Gateway authentication to fail on the next container start. `yrvi-restart.sh` re-injects secrets from macOS Keychain automatically before restarting.
+
+```bash
+./scripts/yrvi-restart.sh ib_gateway --paper
+./scripts/yrvi-restart.sh api        --paper
+./scripts/yrvi-restart.sh scheduler  --paper
+./scripts/yrvi-restart.sh ib_gateway --live   # requires YRVI_ENV=live in environment
+```
+
+**Flags:**
+- `--dry-run` — print what would happen, make no changes
+- `--keep-secrets` — leave secret files on disk after restart (same as `setup_docker.sh`)
+
+**What it does:**
+1. Fetches secrets from macOS Keychain (`YRVI_TWS_PAPER` / `YRVI_TWS_LIVE` and `YRVI_RENDER`)
+2. Writes them to `docker/secrets/` (chmod 600)
+3. Runs `docker restart <container>`
+4. Polls health status every 3s — exits with an error if the container is not healthy within 60s, then wipes secret files
+
 ## Running Manually
 
 **Run full pipeline once immediately** (screener → size → execute):
