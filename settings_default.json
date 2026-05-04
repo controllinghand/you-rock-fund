@@ -10,5 +10,6 @@
   "ibkr_port": 4002,
   "discord_webhook_enabled": true,
   "trading_mode": "paper",
-  "execution_time": "10:00"
+  "execution_time": "10:00",
+  "auto_restart_gateway": true
 }

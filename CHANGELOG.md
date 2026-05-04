@@ -1,3 +1,10 @@
+## [1.1.1-beta] - May 2026
+### Added
+- Watchdog auto-restart: after 30 min of continuous gateway failure outside market hours, watchdog restarts ib_gateway automatically via yrvi-restart.sh (non-containerized) or docker restart (containerized), with Discord alerts before and after
+- New setting `auto_restart_gateway` (default true) — toggle from dashboard without redeploying
+- Market-hours guard: auto-restart suppressed 9:30 AM – 4:00 PM ET on weekdays; alert-only during that window
+- One restart attempt per failure episode; if it fails, watchdog resumes 60-min alerts and waits for manual intervention
+
 ## [0.1.0-beta] - April 2026
 ### Added
 - Complete wheel strategy automation
