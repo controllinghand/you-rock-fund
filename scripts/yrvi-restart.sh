@@ -246,10 +246,15 @@ echo ""
 printf "${BOLD}Step 4 / 4   Wait for container to become healthy${NC}\n"
 echo "──────────────────────────────────────────────────────"
 
+# ib_gateway needs extra time to authenticate with IBKR after restart
+case "$CONTAINER" in
+    ib_gateway) TIMEOUT=180 ;;
+    *)          TIMEOUT=60  ;;
+esac
+
 if [ "$DRY_RUN" = true ]; then
-    info "Would poll docker inspect health every 3s (timeout 60s)"
+    info "Would poll docker inspect health every 3s (timeout ${TIMEOUT}s)"
 else
-    TIMEOUT=60
     ELAPSED=0
     FINAL_STATUS=""
 
@@ -265,9 +270,11 @@ else
             FINAL_STATUS="healthy"; break
         elif [ "$HEALTH" = "unhealthy" ]; then
             FINAL_STATUS="unhealthy"; break
-        elif [ -z "$HEALTH" ] && [ "$STATUS" = "running" ]; then
-            # Container has no healthcheck configured — running is sufficient
-            FINAL_STATUS="running (no healthcheck)"; break
+        elif [ -z "$HEALTH" ] || [ "$HEALTH" = "<no value>" ]; then
+            # No HEALTHCHECK defined — docker inspect returns empty or "<no value>"
+            if [ "$STATUS" = "running" ]; then
+                FINAL_STATUS="running (no healthcheck)"; break
+            fi
         fi
 
         ELAPSED=$(( ELAPSED + 3 ))
