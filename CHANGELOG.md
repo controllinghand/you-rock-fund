@@ -1,3 +1,15 @@
+## [1.2.5] - May 2026
+### Added
+- Performance page: "Total Realized" stat card showing combined option premium + forced-sale P&L
+- Performance table: separate "Premium" and "Sales P&L" columns; footer shows net effect of forced sales
+- Bar chart tooltip shows sales P&L alongside premium when a forced liquidation occurred that week
+### Changed
+- `ytd_tracker.json` now stores `premium_collected`, `shares_sold_pnl`, and `total_realized` per week (backwards-compatible: old entries with `realized` are normalized on read)
+- YTD `total_premium`, weekly `yield_pct`, and annual goal progress track option premium only — forced liquidations no longer inflate these numbers
+- Sidebar version label removed — status bar version pill is the single source of truth
+### Fixed
+- `yrvi-build.sh`: re-queries container ID after `docker compose up --build` so health polling in Step 4 inspects the live container instead of the pre-rebuild (stale) ID
+
 ## [1.2.1] - May 2026
 ### Added
 - Discord `🚨🚨🚨 EMERGENCY SHARE SALE` alert fires immediately on every wheel share sale (dropped screener, earnings this week, no viable CC), with ticker, shares, fill price, proceeds, reason, and realized P&L
