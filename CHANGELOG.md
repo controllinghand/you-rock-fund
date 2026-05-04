@@ -1,3 +1,10 @@
+## [1.2.6] - May 2026
+### Added
+- Discord weekly results: footnotes explaining skip reasons appear at the bottom of the trades field when applicable — "Spread too wide" (liquidity check) and "Contract too large" ($70K max per position) only included if that skip occurred that week
+- `trader.py` now records `skipped_contract_size` in execution results when a fallback candidate's single contract would exceed the $70,000 max position size
+### Fixed
+- "Failed Market Data" badge on This Week page — verified already resolved; `ThisWeek.jsx` was rewritten to a table/screener view and no longer makes live IBKR market data requests
+
 ## [1.2.5] - May 2026
 ### Added
 - Performance page: "Total Realized" stat card showing combined option premium + forced-sale P&L
