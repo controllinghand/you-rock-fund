@@ -106,21 +106,23 @@ def _build_trades_section(state: dict) -> tuple[str, str]:
     pos_by_ticker = {p["ticker"]: p for p in state.get("positions", [])}
 
     EMOJI = {
-        "filled":             "✅",
-        "dry_run":            "✅",
-        "partial_fill":       "✅",
-        "failed":             "❌",
-        "failed_qualify":     "❌",
-        "failed_market_data": "❌",
-        "skipped_liquidity":  "⚠️",
-        "unfilled":           "❌",
+        "filled":                "✅",
+        "dry_run":               "✅",
+        "partial_fill":          "✅",
+        "failed":                "❌",
+        "failed_qualify":        "❌",
+        "failed_market_data":    "❌",
+        "skipped_liquidity":     "⚠️",
+        "skipped_contract_size": "⚠️",
+        "unfilled":              "❌",
     }
     SKIP_LABEL = {
-        "failed":             "failed — order unfilled",
-        "failed_qualify":     "skipped — could not qualify contract",
-        "failed_market_data": "skipped — no market data",
-        "skipped_liquidity":  "skipped — spread too wide",
-        "unfilled":           "unfilled",
+        "failed":                "failed — order unfilled",
+        "failed_qualify":        "skipped — could not qualify contract",
+        "failed_market_data":    "skipped — no market data",
+        "skipped_liquidity":     "skipped — spread too wide",
+        "skipped_contract_size": "skipped — contract too large",
+        "unfilled":              "unfilled",
     }
 
     lines       = []
@@ -175,12 +177,25 @@ def _build_trades_section(state: dict) -> tuple[str, str]:
         sign = "+" if avg >= 0 else "-"
         slippage_line = f"💹 Avg fill vs screener: {sign}${abs(avg):.2f} per contract"
 
+    statuses = {ex.get("status") for ex in executions}
+    footnotes = []
+    if "skipped_liquidity" in statuses:
+        footnotes.append("* Spread too wide = bid/ask gap > 20% of mid price (low liquidity — protects against bad fills)")
+    if "skipped_contract_size" in statuses:
+        footnotes.append("* Contract too large = single contract exceeds $70,000 max position size")
+    footnote_block = "\n" + "\n".join(footnotes) if footnotes else ""
+
     # Discord field value cap is 1024 chars
     if slippage_line:
         combined = trades_text + "\n" + slippage_line
         if len(combined) > 1024:
             trades_text = trades_text[:1020 - len(slippage_line)] + "…"
         trades_text = trades_text + "\n" + slippage_line
+
+    if footnote_block:
+        if len(trades_text) + len(footnote_block) > 1024:
+            trades_text = trades_text[:1024 - len(footnote_block) - 1] + "…"
+        trades_text = trades_text + footnote_block
 
     return trades_text, slippage_line
 

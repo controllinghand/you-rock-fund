@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 from ib_insync import IB, Option, Stock, LimitOrder, MarketOrder
 
-from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, ACCOUNT, NUM_POSITIONS, TOTAL_FUND_BUDGET, DRY_RUN
+from config import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, ACCOUNT, NUM_POSITIONS, TOTAL_FUND_BUDGET, MAX_PER_POSITION, DRY_RUN
 
 logging.basicConfig(
     level=logging.INFO,
@@ -375,6 +375,10 @@ def execute_positions(sized_positions: list, extra_targets: list = None) -> list
             raw = extras[extra_ptr]
             extra_ptr += 1
             if raw["ticker"] in attempted:
+                continue
+            if raw["put_20d_strike"] * 100 > MAX_PER_POSITION:
+                log.info(f"  ⛔ {raw['ticker']} skipped — contract size ${raw['put_20d_strike'] * 100:,.0f} exceeds ${MAX_PER_POSITION:,.0f} max")
+                results.append({"ticker": raw["ticker"], "status": "skipped_contract_size"})
                 continue
             is_last  = (filled_count == NUM_POSITIONS - 1)
             remaining = TOTAL_FUND_BUDGET - capital_deployed
