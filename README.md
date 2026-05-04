@@ -1,6 +1,6 @@
 # You Rock Volatility Income Fund (YRVI)
 
-![Version](https://img.shields.io/badge/version-1.1.1--beta-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 
 An automated Python algorithmic options trading system that generates weekly income through the complete wheel strategy — selling cash-secured puts (CSPs), managing assignments with covered calls (CCs), and enforcing automatic stop losses — all running 24/7 on a Mac Mini with zero manual intervention.
 
@@ -409,7 +409,7 @@ cat state.json               # Full system state
 
 ## Version History
 
-### v1.1.1-beta (May 2026)
+### v1.2.0 (May 2026)
 - Watchdog auto-restart: after 30 min down outside market hours, watchdog restarts ib_gateway via `yrvi-restart.sh` and sends Discord alerts before/after
 - New `auto_restart_gateway` setting (default true) — toggleable from dashboard
 - Market-hours guard: no auto-restart 9:30 AM – 4:00 PM ET; alert-only during market hours

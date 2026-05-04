@@ -1,9 +1,12 @@
-## [1.1.1-beta] - May 2026
+## [1.2.0] - May 2026
 ### Added
-- Watchdog auto-restart: after 30 min of continuous gateway failure outside market hours, watchdog restarts ib_gateway automatically via yrvi-restart.sh (non-containerized) or docker restart (containerized), with Discord alerts before and after
-- New setting `auto_restart_gateway` (default true) — toggle from dashboard without redeploying
-- Market-hours guard: auto-restart suppressed 9:30 AM – 4:00 PM ET on weekdays; alert-only during that window
-- One restart attempt per failure episode; if it fails, watchdog resumes 60-min alerts and waits for manual intervention
+- scripts/yrvi-restart.sh: re-injects Keychain secrets before docker restart, fixing individual container restarts
+- Watchdog auto-restarts ib_gateway after 30 min down outside market hours (never during 9:30–4:00 PM ET)
+- auto_restart_gateway setting with dashboard toggle (default true)
+### Changed
+- Watchdog alerts distinguish auto-restart attempted vs manual intervention required
+### Notes
+- Drops beta label — first full stable release with live trading resilience features
 
 ## [0.1.0-beta] - April 2026
 ### Added

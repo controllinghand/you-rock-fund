@@ -212,6 +212,18 @@ export default function SettingsPage() {
     }
   }
 
+  const toggleAutoRestart = async (val) => {
+    set('auto_restart_gateway', val)                                   // optimistic
+    try {
+      await axios.post('/api/settings', { auto_restart_gateway: val })
+      setOriginal(prev => ({ ...prev, auto_restart_gateway: val }))  // keep isDirty clean
+      showMsg('success', `Auto-restart gateway ${val ? 'enabled' : 'disabled'}`)
+    } catch (err) {
+      set('auto_restart_gateway', !val)                               // revert
+      showMsg('error', err.response?.data?.detail ?? err.message)
+    }
+  }
+
   const isDirty = JSON.stringify(settings) !== JSON.stringify(original)
 
   if (!settings) return (
@@ -331,6 +343,14 @@ export default function SettingsPage() {
 
         <div className="border-t border-gray-200 dark:border-gray-800 pt-3">
           <Toggle label="Dry Run" sub="Simulate orders — no real trades placed" checked={settings.dry_run} onChange={v => set('dry_run', v)} />
+        </div>
+        <div className="border-t border-gray-200 dark:border-gray-800 pt-3">
+          <Toggle
+            label="Auto-Restart Gateway"
+            sub="Automatically restart ib_gateway after 30 min down (outside market hours only)"
+            checked={settings.auto_restart_gateway ?? true}
+            onChange={toggleAutoRestart}
+          />
         </div>
       </Section>
 
