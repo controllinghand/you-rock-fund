@@ -1,3 +1,10 @@
+## [1.2.1] - May 2026
+### Added
+- Discord `🚨🚨🚨 EMERGENCY SHARE SALE` alert fires immediately on every wheel share sale (dropped screener, earnings this week, no viable CC), with ticker, shares, fill price, proceeds, reason, and realized P&L
+- `_find_cc_strike()` fetches live IBKR market price before building the strike candidate list; scan floor = max(assigned_strike, current_price × 0.95) to avoid scanning deep-ITM calls when a stock has run up
+- `detect_assignments()` falls back to IBKR `avgCost` when `assigned_strike` is missing from state, eliminating 0.00 placeholders
+- Same avgCost fallback applied in `run_wheel_check()` Step 0 for untracked stocks detected at Monday open
+
 ## [1.2.0] - May 2026
 ### Added
 - scripts/yrvi-restart.sh: re-injects Keychain secrets before docker restart, fixing individual container restarts

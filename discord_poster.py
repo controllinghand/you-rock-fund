@@ -23,6 +23,7 @@ COLOR_YELLOW = 0xF1C40F   # yield 0.5–1%
 COLOR_RED    = 0xE74C3C   # yield < 0.5%
 COLOR_BLUE   = 0x3498DB   # preview
 COLOR_PURPLE = 0x9B59B6   # assignment alert
+COLOR_FIRE   = 0xFF0000   # emergency share sale
 
 
 def is_enabled() -> bool:
@@ -394,6 +395,50 @@ def post_preview(positions: list, budget: float):
         "footer":    {"text": "You Rock Volatility Income Fund"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }]})
+
+
+def post_emergency_share_sale(result: dict):
+    """🚨 Immediate alert fired every time wheel shares are sold at market."""
+    if not WEBHOOK_URL:
+        return
+
+    ticker     = result.get("ticker", "?")
+    shares     = result.get("shares", 0)
+    fill_price = result.get("fill_price") or 0.0
+    proceeds   = result.get("proceeds") or 0.0
+    reason     = result.get("reason", "unknown")
+    realized   = result.get("realized_pnl")
+
+    reason_labels = {
+        "dropped_screener":   "Dropped from screener",
+        "earnings_this_week": "Earnings this week",
+        "no_viable_cc":       "No viable CC (delta < 0.20)",
+    }
+    reason_str = reason_labels.get(reason, reason)
+
+    if realized is not None:
+        sign    = "+" if realized >= 0 else ""
+        pnl_str = f"{sign}${realized:,.0f}"
+    else:
+        pnl_str = "N/A"
+
+    _post({
+        "content": f"🚨🚨🚨 **EMERGENCY SHARE SALE — {ticker}** 🚨🚨🚨",
+        "embeds": [{
+            "title":       f"🚨🚨🚨 EMERGENCY SHARE SALE: {ticker} — {reason_str}",
+            "description": f"**{shares:,} shares of {ticker}** sold at market",
+            "color":       COLOR_FIRE,
+            "fields": [
+                {"name": "Shares",       "value": f"{shares:,}",         "inline": True},
+                {"name": "Fill Price",   "value": f"${fill_price:.2f}",  "inline": True},
+                {"name": "Proceeds",     "value": f"${proceeds:,.0f}",   "inline": True},
+                {"name": "Realized P&L", "value": pnl_str,               "inline": True},
+                {"name": "Reason",       "value": reason_str,            "inline": True},
+            ],
+            "footer":    {"text": "You Rock Volatility Income Fund — SHARES SOLD"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }],
+    })
 
 
 def post_assignment_alert(new_assignments: list):

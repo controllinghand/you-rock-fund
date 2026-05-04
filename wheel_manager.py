@@ -107,6 +107,11 @@ def _find_cc_strike(ib: IB, ticker: str, expiry: str,
         log.warning(f"  ⚠️  {ticker}: cannot qualify stock for option chain lookup")
         return None
 
+    stock_data = ib.reqMktData(q_stock[0], "", snapshot=True)
+    ib.sleep(2)
+    current_price = stock_data.last or stock_data.close or 0
+    ib.cancelMktData(q_stock[0])
+
     chains = ib.reqSecDefOptParams(ticker, "", "STK", q_stock[0].conId)
     if not chains:
         log.warning(f"  ⚠️  {ticker}: IBKR returned no option chain data")
@@ -121,9 +126,14 @@ def _find_cc_strike(ib: IB, ticker: str, expiry: str,
         log.warning(f"  ⚠️  {ticker}: expiry {expiry} not listed in option chain")
         return None
 
-    candidates = sorted(s for s in all_strikes if s >= assigned_strike)
+    price_floor    = current_price * 0.95 if current_price > 0 else assigned_strike
+    effective_floor = max(assigned_strike, price_floor) if assigned_strike > 0 else price_floor
+    candidates = sorted(s for s in all_strikes if s >= effective_floor)
+    log.info(f"  📍 {ticker}: current=${current_price:.2f}  "
+             f"assigned_strike=${assigned_strike:.2f}  "
+             f"scan_floor=${effective_floor:.2f}")
     if not candidates:
-        log.warning(f"  ⚠️  {ticker}: no strikes >= ${assigned_strike:.2f}")
+        log.warning(f"  ⚠️  {ticker}: no strikes >= effective floor ${effective_floor:.2f}")
         return None
 
     candidates = candidates[:MAX_CC_STRIKES]
@@ -202,7 +212,8 @@ def _find_cc_strike(ib: IB, ticker: str, expiry: str,
 
 # ── Orders ─────────────────────────────────────────────────────
 
-def _sell_stock_market(ib: IB, ticker: str, shares: int, reason: str) -> dict:
+def _sell_stock_market(ib: IB, ticker: str, shares: int, reason: str,
+                       assigned_strike: float = 0.0) -> dict:
     contract  = Stock(ticker, "SMART", "USD")
     qualified = ib.qualifyContracts(contract)
     if not qualified:
@@ -223,7 +234,17 @@ def _sell_stock_market(ib: IB, ticker: str, shares: int, reason: str) -> dict:
         if status == "Filled" or (remaining == 0 and filled > 0):
             fill     = trade.orderStatus.avgFillPrice
             proceeds = round(shares * fill, 2)
+            realized = round(proceeds - (assigned_strike * shares), 2) \
+                       if assigned_strike > 0 else None
             log.info(f"  ✅ Sold: {shares}x {ticker} @ ${fill:.2f} = ${proceeds:,.0f}")
+            discord_poster.post_emergency_share_sale({
+                "ticker":       ticker,
+                "shares":       shares,
+                "fill_price":   fill,
+                "proceeds":     proceeds,
+                "reason":       reason,
+                "realized_pnl": realized,
+            })
             return {"status": "filled", "fill_price": fill, "proceeds": proceeds}
         log.info(f"  ⏳ Sell status: {status} after {elapsed}s")
 
@@ -357,8 +378,13 @@ def detect_assignments():
         else:
             assigned_strike = strike_lookup.get(ticker, 0.0)
             if assigned_strike == 0.0:
-                log.warning(f"  ⚠️  {ticker}: strike not found in state — "
-                             f"set assigned_strike manually in state.json")
+                ibkr_avg_cost = next(
+                    (p.avgCost for p in ibkr_positions
+                     if p.contract.symbol == ticker), 0.0
+                )
+                assigned_strike = round(ibkr_avg_cost, 2)
+                log.warning(f"  ⚠️  {ticker}: strike not in state — "
+                            f"using IBKR avgCost ${assigned_strike:.2f} as assigned_strike")
             h = {
                 "ticker":             ticker,
                 "shares":             shares,
@@ -437,6 +463,10 @@ def run_wheel_check() -> tuple[float, list]:
                 sym = p.contract.symbol
                 if sym not in known_tickers:
                     strike = strike_lookup.get(sym, 0.0)
+                    if strike == 0.0:
+                        strike = round(p.avgCost, 2)
+                        log.warning(f"  ⚠️  {sym}: using IBKR avgCost ${strike:.2f} "
+                                    f"as assigned_strike fallback")
                     log.warning(f"⚠️  Untracked stock detected: {sym} "
                                 f"{int(p.position)} shares @ ${strike:.2f} — "
                                 f"adding to wheel_holdings")
@@ -485,7 +515,8 @@ def run_wheel_check() -> tuple[float, list]:
             # ── Step 1: Screener check ────────────────────────
             if candidate_info and ticker not in candidate_info:
                 log.warning(f"  🚫 {ticker}: dropped from screener — selling shares")
-                result = _sell_stock_market(ib, ticker, shares, "dropped_screener")
+                result = _sell_stock_market(ib, ticker, shares, "dropped_screener",
+                                               assigned_strike=assigned_strike)
                 if result["status"] == "filled":
                     proceeds = result["proceeds"]
                     realized = round(proceeds - (assigned_strike * shares), 2)
@@ -524,7 +555,8 @@ def run_wheel_check() -> tuple[float, list]:
                 dte_int = int(days_to_earnings)
                 log.warning(f"  🚨 {ticker}: earnings in {dte_int} day(s) — "
                              f"selling shares to avoid earnings risk")
-                result = _sell_stock_market(ib, ticker, shares, "earnings_this_week")
+                result = _sell_stock_market(ib, ticker, shares, "earnings_this_week",
+                                               assigned_strike=assigned_strike)
                 if result["status"] == "filled":
                     proceeds = result["proceeds"]
                     realized = round(proceeds - (assigned_strike * shares), 2)
@@ -556,7 +588,8 @@ def run_wheel_check() -> tuple[float, list]:
             if cc_info is None:
                 log.warning(f"  ❌ {ticker}: no call strike with delta ≥ "
                              f"{CC_DELTA_MIN:.2f} — selling shares")
-                result = _sell_stock_market(ib, ticker, shares, "no_viable_cc")
+                result = _sell_stock_market(ib, ticker, shares, "no_viable_cc",
+                                               assigned_strike=assigned_strike)
                 if result["status"] == "filled":
                     proceeds = result["proceeds"]
                     realized = round(proceeds - (assigned_strike * shares), 2)
