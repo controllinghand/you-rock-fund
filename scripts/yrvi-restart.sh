@@ -136,7 +136,7 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 # ── Step 1: Verify stack is running ────────────────────────────
-echo "${BOLD}Step 1 / 4   Verify stack is running${NC}"
+printf "${BOLD}Step 1 / 4   Verify stack is running${NC}\n"
 echo "──────────────────────────────────────────────────────"
 
 RUNNING=$(docker compose --env-file .env.compose ps --status running 2>/dev/null \
@@ -157,7 +157,7 @@ ok "$RUNNING container(s) running — $CONTAINER found (id: ${CONTAINER_ID:0:12}
 
 # ── Step 2: Inject secrets from macOS Keychain ─────────────────
 echo ""
-echo "${BOLD}Step 2 / 4   Inject secrets from macOS Keychain${NC}"
+printf "${BOLD}Step 2 / 4   Inject secrets from macOS Keychain${NC}\n"
 echo "──────────────────────────────────────────────────────"
 
 mkdir -p docker/secrets
@@ -230,7 +230,7 @@ fetch_secret "$KC_RENDER" "docker/secrets/render_secret" "Render screener API se
 
 # ── Step 3: Restart container ──────────────────────────────────
 echo ""
-echo "${BOLD}Step 3 / 4   Restart container${NC}"
+printf "${BOLD}Step 3 / 4   Restart container${NC}\n"
 echo "──────────────────────────────────────────────────────"
 
 if [ "$DRY_RUN" = true ]; then
@@ -243,7 +243,7 @@ fi
 
 # ── Step 4: Wait for healthy ───────────────────────────────────
 echo ""
-echo "${BOLD}Step 4 / 4   Wait for container to become healthy${NC}"
+printf "${BOLD}Step 4 / 4   Wait for container to become healthy${NC}\n"
 echo "──────────────────────────────────────────────────────"
 
 if [ "$DRY_RUN" = true ]; then
