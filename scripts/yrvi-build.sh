@@ -252,6 +252,8 @@ else
         docker compose --env-file .env.compose up -d --build
     else
         docker compose --env-file .env.compose up -d --build "$CONTAINER"
+        # Re-query after rebuild — container ID changes after docker compose replaces the container
+        CONTAINER_ID=$(docker compose --env-file .env.compose ps -q "$CONTAINER" 2>/dev/null | head -1 || true)
     fi
     ok "${CONTAINER} built and started"
 fi
