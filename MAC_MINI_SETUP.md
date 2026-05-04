@@ -161,6 +161,12 @@ cd ~ && git clone git@github.com:controllinghand/you_rock_fund.git
 cd you_rock_fund
 ```
 
+### Register the Upgrade URL Scheme (one-time)
+```bash
+bash scripts/yrvi-register-url-scheme.sh
+```
+This registers `yrvi://upgrade` so the dashboard Upgrade button can open Terminal directly for one-click upgrades. Run it once after cloning; re-run it if you move the repo.
+
 ### Run Paper Trading Setup
 ```bash
 ./setup_docker.sh --paper

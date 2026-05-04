@@ -40,9 +40,9 @@ export default function StatusBar() {
   const prevPid                   = useRef(null)
   const { theme, setTheme }       = useThemeContext()
 
-  const [versionInfo, setVersionInfo]   = useState(null)
-  const [showConfirm, setShowConfirm]   = useState(false)
-  const [upgradePhase, setUpgradePhase] = useState(null)   // null|running|waiting_down|waiting_up|done|error
+  const [versionInfo, setVersionInfo]     = useState(null)
+  const [showConfirm, setShowConfirm]     = useState(false)
+  const [upgradePhase, setUpgradePhase]   = useState(null)   // null|waiting_down|waiting_up|done|error
   const [upgradeOutput, setUpgradeOutput] = useState('')
   const pollRef = useRef(null)
 
@@ -102,7 +102,7 @@ export default function StatusBar() {
             stopPoll()
             setUpgradePhase('error')
             setUpgradeOutput(baseOutput +
-              '\n\n❌ Containers taking longer than expected — check Docker or run yrvi-restart.sh manually')
+              '\n\n❌ Containers taking longer than expected — check Docker or run:\nbash scripts/yrvi-build.sh all --paper')
           }
         })
     }, 2000)
@@ -121,36 +121,25 @@ export default function StatusBar() {
             stopPoll()
             setUpgradePhase('error')
             setUpgradeOutput(baseOutput +
-              '\n\n⚠️  Restart may not have triggered — check terminal')
+              '\n\n⚠️  Restart may not have triggered — check Terminal')
           }
           // else still up, keep waiting
         })
         .catch(() => {
-          // /health went away — containers are going down; start phase 2
+          // /health went away — containers going down; start phase 2
           stopPoll()
           startPhase2(baseOutput)
         })
     }, 2000)
   }
 
-  // ── Upgrade handlers ──────────────────────────────────────────
-  async function handleUpgrade() {
+  // ── Upgrade: trigger yrvi:// URL scheme, then poll for reconnect ──
+  function handleUpgrade() {
     setShowConfirm(false)
-    setUpgradePhase('running')
-    setUpgradeOutput('')
-    try {
-      const { data } = await axios.post('/api/version/upgrade')
-      const output = data.output || ''
-      setUpgradeOutput(output)
-      if (!data.success) {
-        setUpgradePhase('error')
-        return
-      }
-      startReconnectPolling(output)
-    } catch (e) {
-      setUpgradeOutput(e.response?.data?.detail || e.message || 'Unknown error')
-      setUpgradePhase('error')
-    }
+    const initMsg = 'Opening Terminal to run upgrade...\nThe dashboard will automatically reconnect when complete.'
+    setUpgradeOutput(initMsg)
+    window.location.href = 'yrvi://upgrade'
+    startReconnectPolling(initMsg)
   }
 
   function closeUpgrade() {
@@ -167,8 +156,9 @@ export default function StatusBar() {
   const diff      = vBehind ? versionDiff(versionInfo.current, versionInfo.latest) : null
   const pillColor = vUp ? 'green' : vBehind && diff === 'patch' ? 'yellow' : vBehind ? 'red' : 'gray'
 
+  const canCancel = upgradePhase === 'waiting_down' || upgradePhase === 'waiting_up'
+
   const upgradeModalPhaseLabel = {
-    running:      'Upgrading...',
     waiting_down: 'Waiting for restart...',
     waiting_up:   'Restarting...',
     done:         '✅ Back online! Refreshing...',
@@ -286,8 +276,8 @@ export default function StatusBar() {
           <div className="bg-white dark:bg-gray-900 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl border border-gray-200 dark:border-gray-700">
             <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Upgrade YRVI?</h2>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-              This will pull the latest code and restart all containers via yrvi-restart.sh.
-              The app will be unavailable for ~30 seconds. Continue?
+              This will open Terminal and run the upgrade script (yrvi-upgrade.command).
+              The dashboard will automatically reconnect when complete. Continue?
             </p>
             <p className="text-sm font-mono text-gray-400 dark:text-gray-500 mb-6">
               v{versionInfo?.current} → v{versionInfo?.latest}
@@ -339,7 +329,7 @@ export default function StatusBar() {
                 <p className="text-sm text-yellow-400 mb-4">
                   If the restart didn't happen, run{' '}
                   <code className="font-mono bg-gray-800 dark:bg-gray-950 px-1.5 py-0.5 rounded text-yellow-300 text-xs">
-                    bash scripts/yrvi-restart.sh
+                    bash scripts/yrvi-build.sh all --paper
                   </code>{' '}
                   manually from terminal.
                 </p>
@@ -352,6 +342,17 @@ export default function StatusBar() {
                   </button>
                 </div>
               </>
+            )}
+
+            {canCancel && (
+              <div className="flex justify-end mt-2">
+                <button
+                  onClick={closeUpgrade}
+                  className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
             )}
           </div>
         </div>
