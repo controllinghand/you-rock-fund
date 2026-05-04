@@ -48,12 +48,12 @@ export default function Performance() {
   )
 
   const {
-    weeks = [], total_premium = 0, weeks_traded = 0,
+    weeks = [], total_premium = 0, total_realized = 0, weeks_traded = 0,
     avg_yield_pct = 0, best_week, worst_week,
     annual_target = 100_000, progress_pct = 0
   } = data ?? {}
 
-  const maxRealized = weeks.length ? Math.max(...weeks.map(w => w.realized ?? 0)) : 0
+  const maxPremium = weeks.length ? Math.max(...weeks.map(w => w.premium_collected ?? 0)) : 0
 
   const gridColor   = isDark ? '#1f2937' : '#e5e7eb'
   const axisStroke  = isDark ? '#374151' : '#d1d5db'
@@ -70,7 +70,12 @@ export default function Performance() {
       <div style={{ background: tooltipBg, border: `1px solid ${tooltipBdr}` }}
         className="rounded-lg p-3 text-sm shadow-xl">
         <div style={{ color: tooltipSub }} className="mb-1">Week of {fmtDate(d.week_start)}</div>
-        <div style={{ color: tooltipText }} className="font-bold text-base">${d.realized?.toLocaleString()}</div>
+        <div style={{ color: tooltipText }} className="font-bold text-base">${d.premium_collected?.toLocaleString()} premium</div>
+        {(d.shares_sold_pnl ?? 0) !== 0 && (
+          <div style={{ color: tooltipSub }} className="text-xs">
+            {(d.shares_sold_pnl ?? 0) >= 0 ? '+' : ''}${d.shares_sold_pnl?.toLocaleString()} sales P&L
+          </div>
+        )}
         <div className="text-green-400">{d.yield_pct?.toFixed(3)}% yield</div>
       </div>
     )
@@ -84,8 +89,12 @@ export default function Performance() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Premium"    value={`$${total_premium.toLocaleString()}`}          icon={TrendingUp} accent="text-green-400" />
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard label="Total Premium"    value={`$${total_premium.toLocaleString()}`}  icon={TrendingUp} accent="text-green-400"
+          sub="option premium only" />
+        <StatCard label="Total Realized"   value={`$${total_realized.toLocaleString()}`} icon={TrendingUp}
+          accent={total_realized >= total_premium ? 'text-green-400' : 'text-yellow-400'}
+          sub="premium + sales P&L" />
         <StatCard label="Weeks Traded"     value={weeks_traded}   sub="weeks executed"            icon={Target} />
         <StatCard
           label="Avg Weekly Yield"
@@ -108,7 +117,7 @@ export default function Performance() {
               <Award size={16} className="text-green-400" />
               <span className="text-green-400 text-xs font-medium">Best Week</span>
             </div>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">${best_week.realized?.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">${(best_week.premium_collected ?? best_week.realized)?.toLocaleString()}</div>
             <div className="text-gray-500 text-sm mt-1">
               {fmtDate(best_week.week_start)} · {best_week.yield_pct?.toFixed(2)}% yield
             </div>
@@ -120,7 +129,7 @@ export default function Performance() {
               <AlertTriangle size={16} className="text-red-400" />
               <span className="text-red-400 text-xs font-medium">Worst Week</span>
             </div>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">${worst_week.realized?.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">${(worst_week.premium_collected ?? worst_week.realized)?.toLocaleString()}</div>
             <div className="text-gray-500 text-sm mt-1">
               {fmtDate(worst_week.week_start)} · {worst_week.yield_pct?.toFixed(2)}% yield
             </div>
@@ -158,9 +167,9 @@ export default function Performance() {
               <YAxis stroke={axisStroke} tick={{ fill: tickColor, fontSize: 11 }}
                 tickFormatter={v => `$${(v / 1000).toFixed(1)}k`} axisLine={false} tickLine={false} width={50} />
               <Tooltip content={<CustomTooltip />} cursor={{ fill: isDark ? '#ffffff06' : '#00000004' }} />
-              <Bar dataKey="realized" radius={[4, 4, 0, 0]}>
+              <Bar dataKey="premium_collected" radius={[4, 4, 0, 0]}>
                 {weeks.map((w, i) => (
-                  <Cell key={i} fill={w.realized === maxRealized ? '#10b981' : '#2563eb'} />
+                  <Cell key={i} fill={w.premium_collected === maxPremium ? '#10b981' : '#2563eb'} />
                 ))}
               </Bar>
             </BarChart>
@@ -178,32 +187,46 @@ export default function Performance() {
             <thead>
               <tr className="text-gray-500 text-xs border-b border-gray-200 dark:border-gray-800">
                 <th className="text-left px-5 py-3">Week Of</th>
-                <th className="text-right px-5 py-3">Realized</th>
+                <th className="text-right px-5 py-3">Premium</th>
+                <th className="text-right px-5 py-3">Sales P&L</th>
                 <th className="text-right px-5 py-3">Yield</th>
               </tr>
             </thead>
             <tbody>
-              {[...weeks].reverse().map((w, i) => (
-                <tr key={i} className="border-b border-gray-100 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
-                  <td className="px-5 py-3 text-gray-700 dark:text-gray-300">{fmtDate(w.week_start)}</td>
-                  <td className="px-5 py-3 text-right font-medium text-green-400">
-                    ${w.realized?.toLocaleString()}
-                  </td>
-                  <td className={`px-5 py-3 text-right font-medium ${
-                    (w.yield_pct ?? 0) >= 1 ? 'text-green-400'
-                    : (w.yield_pct ?? 0) >= 0.5 ? 'text-yellow-400'
-                    : 'text-red-400'
-                  }`}>
-                    {w.yield_pct?.toFixed(3)}%
-                  </td>
-                </tr>
-              ))}
+              {[...weeks].reverse().map((w, i) => {
+                const salesPnl = w.shares_sold_pnl ?? 0
+                return (
+                  <tr key={i} className="border-b border-gray-100 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
+                    <td className="px-5 py-3 text-gray-700 dark:text-gray-300">{fmtDate(w.week_start)}</td>
+                    <td className="px-5 py-3 text-right font-medium text-green-400">
+                      ${w.premium_collected?.toLocaleString()}
+                    </td>
+                    <td className={`px-5 py-3 text-right font-medium ${
+                      salesPnl > 0 ? 'text-green-400' : salesPnl < 0 ? 'text-red-400' : 'text-gray-500 dark:text-gray-600'
+                    }`}>
+                      {salesPnl === 0 ? '—' : `${salesPnl >= 0 ? '+' : ''}$${salesPnl.toLocaleString()}`}
+                    </td>
+                    <td className={`px-5 py-3 text-right font-medium ${
+                      (w.yield_pct ?? 0) >= 1 ? 'text-green-400'
+                      : (w.yield_pct ?? 0) >= 0.5 ? 'text-yellow-400'
+                      : 'text-red-400'
+                    }`}>
+                      {w.yield_pct?.toFixed(3)}%
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
             <tfoot>
               <tr className="border-t border-gray-300 dark:border-gray-700">
                 <td className="px-5 py-3 text-gray-600 dark:text-gray-400 font-medium">Total</td>
                 <td className="px-5 py-3 text-right font-bold text-gray-900 dark:text-white">
                   ${total_premium.toLocaleString()}
+                </td>
+                <td className="px-5 py-3 text-right font-bold text-gray-900 dark:text-white">
+                  {total_realized !== total_premium
+                    ? `${total_realized >= total_premium ? '+' : ''}$${(total_realized - total_premium).toLocaleString()}`
+                    : '—'}
                 </td>
                 <td className="px-5 py-3 text-right font-medium text-gray-600 dark:text-gray-400">
                   {avg_yield_pct.toFixed(3)}% avg

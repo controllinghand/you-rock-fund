@@ -615,21 +615,30 @@ def get_performance():
     ytd = load_ytd()
     budget = settings.get("fund_budget", 250_000)
 
-    weeks = ytd.get("weeks", [])
+    raw_weeks = ytd.get("weeks", [])
+    # Normalize: ensure every week has premium_collected (backwards-compat with old realized field)
+    weeks = [
+        {**w, "premium_collected": w.get("premium_collected", w.get("realized", 0)),
+               "shares_sold_pnl":  w.get("shares_sold_pnl", 0),
+               "total_realized":   w.get("total_realized", w.get("realized", 0))}
+        for w in raw_weeks
+    ]
     total = ytd.get("total_premium", 0.0)
+    total_realized = round(sum(w["total_realized"] for w in weeks), 2)
     weeks_traded = ytd.get("weeks_traded", 0)
     avg_yield = (total / weeks_traded / budget * 100) if weeks_traded and budget else 0.0
     progress_pct = (total / ANNUAL_TARGET * 100) if ANNUAL_TARGET else 0.0
 
     return {
-        "weeks":         weeks,
-        "total_premium": total,
-        "weeks_traded":  weeks_traded,
-        "avg_yield_pct": round(avg_yield, 3),
-        "best_week":     ytd.get("best_week"),
-        "worst_week":    ytd.get("worst_week"),
-        "annual_target": ANNUAL_TARGET,
-        "progress_pct":  round(progress_pct, 1),
+        "weeks":          weeks,
+        "total_premium":  total,
+        "total_realized": total_realized,
+        "weeks_traded":   weeks_traded,
+        "avg_yield_pct":  round(avg_yield, 3),
+        "best_week":      ytd.get("best_week"),
+        "worst_week":     ytd.get("worst_week"),
+        "annual_target":  ANNUAL_TARGET,
+        "progress_pct":   round(progress_pct, 1),
     }
 
 @app.get("/api/screener")

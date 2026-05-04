@@ -68,19 +68,23 @@ def _save_ytd(ytd: dict):
         json.dump(ytd, f, indent=2)
 
 
-def _update_ytd(week_start: str, total_realized: float, fund_budget: float) -> dict:
+def _update_ytd(week_start: str, premium_collected: float, shares_sold_pnl: float, fund_budget: float) -> dict:
     ytd = _load_ytd()
     if not any(w["week_start"] == week_start for w in ytd["weeks"]):
         ytd["weeks"].append({
-            "week_start": week_start,
-            "realized":   total_realized,
-            "yield_pct":  round(total_realized / fund_budget * 100, 3) if fund_budget else 0,
+            "week_start":        week_start,
+            "premium_collected": premium_collected,
+            "shares_sold_pnl":   shares_sold_pnl,
+            "total_realized":    round(premium_collected + shares_sold_pnl, 2),
+            "yield_pct":         round(premium_collected / fund_budget * 100, 3) if fund_budget else 0,
         })
-        ytd["total_premium"] = round(sum(w["realized"] for w in ytd["weeks"]), 2)
+        ytd["total_premium"] = round(
+            sum(w.get("premium_collected", w.get("realized", 0)) for w in ytd["weeks"]), 2
+        )
         ytd["weeks_traded"]  = len(ytd["weeks"])
-        by_realized       = sorted(ytd["weeks"], key=lambda w: w["realized"])
-        ytd["worst_week"]  = by_realized[0]
-        ytd["best_week"]   = by_realized[-1]
+        by_premium        = sorted(ytd["weeks"], key=lambda w: w.get("premium_collected", w.get("realized", 0)))
+        ytd["worst_week"]  = by_premium[0]
+        ytd["best_week"]   = by_premium[-1]
         _save_ytd(ytd)
     return ytd
 
@@ -260,8 +264,9 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000):
     shares_sold_pnl = pnl.get("shares_sold_pnl", 0.0)
     total_realized  = pnl.get("total_realized", 0.0)
 
-    yield_pct = total_realized / fund_budget * 100 if fund_budget else 0
-    ytd       = _update_ytd(week_start, total_realized, fund_budget)
+    premium_collected = csp_premium + cc_premium
+    yield_pct = premium_collected / fund_budget * 100 if fund_budget else 0
+    ytd       = _update_ytd(week_start, premium_collected, shares_sold_pnl, fund_budget)
 
     avg_yield    = (ytd["total_premium"] / ytd["weeks_traded"] / fund_budget * 100) \
                    if ytd["weeks_traded"] and fund_budget else 0
@@ -335,9 +340,11 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000):
         f"**Progress:** {progress_pct:.1f}% toward ${ANNUAL_TARGET:,} annual target",
     ]
     if best:
-        ytd_lines.append(f"**Best Week:** ${best['realized']:,.0f} ({best['yield_pct']:.2f}%)")
+        best_prem = best.get("premium_collected", best.get("realized", 0))
+        ytd_lines.append(f"**Best Week:** ${best_prem:,.0f} ({best['yield_pct']:.2f}%)")
     if worst and best and worst["week_start"] != best["week_start"]:
-        ytd_lines.append(f"**Worst Week:** ${worst['realized']:,.0f} ({worst['yield_pct']:.2f}%)")
+        worst_prem = worst.get("premium_collected", worst.get("realized", 0))
+        ytd_lines.append(f"**Worst Week:** ${worst_prem:,.0f} ({worst['yield_pct']:.2f}%)")
     fields.append({"name": "📊 YTD Stats", "value": "\n".join(ytd_lines), "inline": False})
 
     holdings = [h for h in state.get("wheel_holdings", []) if h.get("shares", 0) > 0]
