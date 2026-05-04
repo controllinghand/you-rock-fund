@@ -805,7 +805,7 @@ def get_version():
 
 _GITHUB_VERSION_URL = (
     "https://raw.githubusercontent.com/controllinghand/"
-    "you_rock_fund/containerized/VERSION"
+    "you_rock_fund/main/VERSION"
 )
 
 @app.get("/api/version/check")
