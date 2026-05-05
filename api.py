@@ -61,8 +61,9 @@ _watchdog_state: dict = {
     "last_gateway_alert":        None,
     "last_ibkr_alert":           None,
     "last_scheduler_alert":      None,
-    "gateway_restart_attempted": False,  # reset on recovery; prevents retry loops
-    "ibkr_restart_attempted":    False,
+    "gateway_restart_attempted":   False,  # reset on recovery; prevents retry loops
+    "ibkr_restart_attempted":      False,
+    "scheduler_restart_attempted": False,
 }
 WATCHDOG_INTERVAL  = 300   # seconds between checks
 ALERT_THRESHOLD    = 600   # seconds a failure must persist before we alert
@@ -218,6 +219,46 @@ def _try_auto_restart_gateway(down_min: int) -> None:
         )
 
 
+def _try_auto_restart_scheduler(down_min: int) -> None:
+    """Attempt to restart the scheduler, sending Discord alerts before and after. Called once per failure episode."""
+    _send_discord_alert(
+        f"⚠️ YRVI Scheduler down {down_min} min — attempting auto-restart..."
+    )
+    try:
+        if CONTAINERIZED:
+            result = subprocess.run(
+                ["docker", "restart", "yrvi-scheduler-1"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode == 0:
+                _send_discord_alert("✅ YRVI Scheduler auto-restart succeeded")
+            else:
+                detail = (result.stderr or result.stdout or "unknown error").strip()[:200]
+                _send_discord_alert(
+                    f"❌ YRVI Scheduler auto-restart FAILED — manual fix: "
+                    f"`./scripts/yrvi-restart.sh scheduler --paper` (from repo root)\n`{detail}`"
+                )
+        else:
+            uid = os.getuid()
+            result = subprocess.run(
+                ["launchctl", "kickstart", "-k", f"gui/{uid}/com.yourockfund.scheduler"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                _send_discord_alert("✅ YRVI Scheduler auto-restart succeeded")
+            else:
+                detail = (result.stderr or result.stdout or "unknown error").strip()[:200]
+                _send_discord_alert(
+                    f"❌ YRVI Scheduler auto-restart FAILED — manual fix: "
+                    f"`./scripts/yrvi-restart.sh scheduler --paper` (from repo root)\n`{detail}`"
+                )
+    except Exception as e:
+        _send_discord_alert(
+            f"❌ YRVI Scheduler auto-restart FAILED — manual fix: "
+            f"`./scripts/yrvi-restart.sh scheduler --paper` (from repo root)\n`{e}`"
+        )
+
+
 def _watchdog_check() -> None:
     """Check gateway and scheduler health; send Discord alerts on persistent failures."""
     now = datetime.now(PST)
@@ -309,15 +350,14 @@ def _watchdog_check() -> None:
         if down_sec >= ALERT_THRESHOLD and (
                 last is None or (now - last).total_seconds() >= ALERT_REPEAT):
             _watchdog_state["last_scheduler_alert"] = now
-            action = (
-                "Run: `docker restart yrvi-scheduler`"
-                if CONTAINERIZED else
-                "Restart scheduler.py manually."
-            )
             _send_discord_alert(
-                f"🚨 **YRVI** Scheduler heartbeat stale for {int(down_sec / 60)} min. "
-                f"Scheduled jobs may not run on time. {action}"
+                f"🚨 **YRVI** Scheduler heartbeat stale for {int(down_sec / 60)} min — "
+                f"attempting auto-restart..."
             )
+        if (not _watchdog_state["scheduler_restart_attempted"]
+                and down_sec >= RESTART_THRESHOLD):
+            _watchdog_state["scheduler_restart_attempted"] = True
+            _try_auto_restart_scheduler(int(down_sec / 60))
     else:
         if _watchdog_state["scheduler_down_since"] is not None:
             down_sec = (now - _watchdog_state["scheduler_down_since"]).total_seconds()
@@ -327,6 +367,7 @@ def _watchdog_check() -> None:
             )
         _watchdog_state["scheduler_down_since"] = None
         _watchdog_state["last_scheduler_alert"] = None
+        _watchdog_state["scheduler_restart_attempted"] = False
 
 
 def _run_watchdog() -> None:
@@ -352,7 +393,7 @@ def restart_scheduler():
     if CONTAINERIZED:
         raise HTTPException(
             status_code=501,
-            detail="In Docker mode use: docker restart yrvi-scheduler",
+            detail="In Docker mode use: ./scripts/yrvi-restart.sh scheduler --paper  (from repo root)",
         )
     uid = os.getuid()
     service = "com.yourockfund.scheduler"
