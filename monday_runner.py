@@ -107,12 +107,32 @@ def _write_weekly_pnl(csp_premium: float, context: dict, fund_budget: float = 0,
     # A new week starts fresh at 0 (the ETF for that week hasn't been sold yet).
     park_pnl = prev.get("park_pnl", 0.0) if prev.get("week_start") == week_monday else 0.0
 
-    total_realized  = round(csp_premium + cc_premium + shares_sold_pnl + park_pnl, 2)
+    # Realized stock P&L from shares CALLED AWAY, queued by detect_assignments —
+    # Saturday's or this morning's. Draining the queue here (and clearing it in the
+    # same write) is what books it exactly once: detection runs up to twice a week
+    # and can re-run, but this assembly is the only place weekly_pnl is written.
+    # Booked into the week being assembled rather than the week the call-away
+    # happened, because that week's P&L is already closed and posted.
+    pending           = state.pop("pending_called_away", []) or []
+    called_away_pnl   = round(sum(e.get("stock_pnl", 0.0) for e in pending), 2)
+    if pending:
+        log.info(f"  📤 Booking called-away stock P&L ${called_away_pnl:+,.0f} from "
+                 f"{len(pending)} holding(s): "
+                 + ", ".join(f"{e['ticker']} ${e.get('stock_pnl', 0.0):+,.0f}"
+                             for e in pending))
+    # A same-week re-run drains an empty queue — carry the booked figure forward so
+    # it isn't zeroed, exactly as shares_sold_pnl and park_pnl are.
+    if not pending and prev.get("week_start") == week_monday:
+        called_away_pnl = prev.get("called_away_pnl", 0.0)
+
+    total_realized  = round(csp_premium + cc_premium + shares_sold_pnl
+                            + called_away_pnl + park_pnl, 2)
     state["weekly_pnl"] = {
         "week_start":      week_monday,
         "csp_premium":     round(csp_premium, 2),
         "cc_premium":      round(cc_premium, 2),
         "shares_sold_pnl": round(shares_sold_pnl, 2),
+        "called_away_pnl": called_away_pnl,
         "park_pnl":        round(park_pnl, 2),
         "total_realized":  total_realized,
         "last_updated":    datetime.now().isoformat(),

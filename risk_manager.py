@@ -94,8 +94,6 @@ def _build_weekly_pnl(state: dict) -> dict:
             unrealized += (h["current_price"] - h["assigned_strike"]) * h["shares"]
     unrealized = round(unrealized, 2)
 
-    total_realized = round(csp_premium + cc_premium + shares_sold_pnl, 2)
-
     # Floor run_date to its Monday so this matches reconciler / monday_runner keying.
     _rd = state.get("run_date", "")[:10]
     if _rd:
@@ -104,11 +102,27 @@ def _build_weekly_pnl(state: dict) -> dict:
     else:
         week_start = ""
 
+    # Components this rebuild cannot derive — carried over from the week's existing
+    # figure instead of dropped. This runs Tue–Thu and OVERWRITES weekly_pnl, so
+    # anything it doesn't carry is erased: called_away_pnl was booked Monday and
+    # would be gone by Tuesday 9AM, and park_pnl only survived because the sweep
+    # sells at 12:30, after the monitor has already run. Guarded on week_start so a
+    # new week can't inherit the last one's numbers.
+    _prev    = state.get("weekly_pnl") or {}
+    _carried = _prev if _prev.get("week_start") == week_start else {}
+    called_away_pnl = _carried.get("called_away_pnl", 0.0) or 0.0
+    park_pnl        = _carried.get("park_pnl", 0.0) or 0.0
+
+    total_realized = round(csp_premium + cc_premium + shares_sold_pnl
+                           + called_away_pnl + park_pnl, 2)
+
     return {
         "week_start":           week_start,
         "csp_premium":          round(csp_premium, 2),
         "cc_premium":           round(cc_premium, 2),
         "shares_sold_pnl":      round(shares_sold_pnl, 2),
+        "called_away_pnl":      round(called_away_pnl, 2),
+        "park_pnl":             round(park_pnl, 2),
         "total_realized":       total_realized,
         "unrealized_stock_pnl": unrealized,
         "grand_total":          round(total_realized + unrealized, 2),

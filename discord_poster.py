@@ -84,13 +84,19 @@ def _save_ytd(ytd: dict):
         json.dump(ytd, f, indent=2)
 
 
-def _update_ytd(week_start: str, premium_collected: float, shares_sold_pnl: float, fund_budget: float) -> dict:
+def _update_ytd(week_start: str, premium_collected: float, shares_sold_pnl: float,
+                fund_budget: float, called_away_pnl: float = 0.0) -> dict:
     ytd = _load_ytd()
     entry = {
         "week_start":        week_start,
         "premium_collected": premium_collected,
         "shares_sold_pnl":   shares_sold_pnl,
-        "total_realized":    round(premium_collected + shares_sold_pnl, 2),
+        # Stock P&L from shares called away. Its own key rather than folded into
+        # shares_sold_pnl, which means shares we chose to sell — kept separate so a
+        # week's numbers still reconcile against the wheel activity that produced
+        # them. Older rows simply lack the key and read as 0.
+        "called_away_pnl":   called_away_pnl,
+        "total_realized":    round(premium_collected + shares_sold_pnl + called_away_pnl, 2),
         "yield_pct":         round(premium_collected / fund_budget * 100, 3) if fund_budget else 0,
     }
     existing_idx = next((i for i, w in enumerate(ytd["weeks"]) if w["week_start"] == week_start), None)
@@ -593,6 +599,7 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000,
     csp_premium     = pnl.get("csp_premium", 0.0)
     cc_premium      = pnl.get("cc_premium", 0.0)
     shares_sold_pnl = pnl.get("shares_sold_pnl", 0.0)
+    called_away_pnl = pnl.get("called_away_pnl", 0.0)
     total_realized  = pnl.get("total_realized", 0.0)
 
     premium_collected = csp_premium + cc_premium
@@ -607,7 +614,8 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000,
     # capital, so the yield reflects reality and matches the dashboard.
     denom = fund_budget or net_liq or capital or 0
     yield_pct = premium_collected / denom * 100 if denom else 0
-    ytd       = _update_ytd(week_start, premium_collected, shares_sold_pnl, denom)
+    ytd       = _update_ytd(week_start, premium_collected, shares_sold_pnl, denom,
+                            called_away_pnl=called_away_pnl)
 
     avg_yield    = (ytd["total_premium"] / ytd["weeks_traded"] / denom * 100) \
                    if ytd["weeks_traded"] and denom else 0
@@ -624,6 +632,12 @@ def post_weekly_results(state: dict, fund_budget: float = 250_000,
         # footer. Same field count, same layout.
         _track_field(),
     ]
+
+    # Only on a week that actually had one — an always-present zero would push the
+    # 3-column grid out of shape every ordinary week for no information.
+    if called_away_pnl:
+        fields.insert(3, {"name": "Called Away P&L",
+                          "value": f"${called_away_pnl:,.0f}", "inline": True})
 
     # Committed capital sits directly under the premium row — high in the card,
     # because "are these puts actually cash-secured?" outranks the week's yield.
@@ -850,7 +864,11 @@ def post_weekly_review(state: dict, called_away: list, new_assignments: list,
     shares_sold_pnl = pnl.get("shares_sold_pnl", 0.0)
     total_realized  = pnl.get("total_realized", 0.0)
 
-    # Called-away stock P&L happens Friday — not yet in weekly_pnl
+    # Called-away stock P&L happens Friday, so it is not in this (still-closing)
+    # week's weekly_pnl. detect_assignments has queued it in pending_called_away
+    # and Monday's _write_weekly_pnl books it into the week it opens — this line
+    # is the preview of that, which is why it is added on top rather than read
+    # back out of weekly_pnl.
     called_away_stock_pnl = sum(h.get("_stock_pnl", 0.0) for h in called_away)
     grand_total = total_realized + called_away_stock_pnl
     yield_pct   = (csp_premium + cc_premium) / fund_budget * 100 if fund_budget else 0

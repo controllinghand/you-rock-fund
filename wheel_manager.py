@@ -959,6 +959,33 @@ def detect_assignments(dry_run: bool = False) -> dict:
         # called-away holdings are intentionally excluded from updated → removed from state
 
     state["wheel_holdings"] = updated
+
+    # Queue the call-away's realized stock P&L for the next weekly_pnl assembly.
+    # It has to be QUEUED rather than booked here: this function runs Saturday and
+    # again at the Monday reconcile, but weekly_pnl is only ever assembled by the
+    # Monday runner — so a call-away detected Saturday had nowhere to land and was
+    # simply lost. post_weekly_review showed it in its grand_total and nothing
+    # persisted it, so the shares half of the wheel never reached weekly_pnl or the
+    # YTD tracker. The bucket is drained (and cleared) by _write_weekly_pnl, which
+    # is what keeps it from being counted twice across Saturday + Monday + re-runs.
+    if called_away and not dry_run:
+        pending = state.get("pending_called_away") or []
+        already = {(e.get("ticker"), e.get("cc_expiry")) for e in pending}
+        for h in called_away:
+            key = (h["ticker"], h.get("current_cc_expiry"))
+            if key in already:
+                continue
+            pending.append({
+                "ticker":          h["ticker"],
+                "shares":          h.get("shares", 0),
+                "assigned_strike": h.get("assigned_strike", 0.0),
+                "cc_strike":       h.get("current_cc_strike") or h.get("assigned_strike", 0.0),
+                "cc_expiry":       h.get("current_cc_expiry"),
+                "stock_pnl":       h.get("_stock_pnl", 0.0),
+                "detected":        datetime.now().isoformat(),
+            })
+        state["pending_called_away"] = pending
+
     if dry_run:
         log.info(f"\n🟡 [DRY RUN] would save {len(updated)} wheel holding(s) — "
                  f"state.json NOT written")
