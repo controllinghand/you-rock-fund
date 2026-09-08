@@ -751,12 +751,22 @@ def detect_assignments(dry_run: bool = False) -> dict:
 
     ib = _connect()
     try:
-        ib.reqPositions()   # populate cache — positions() reads local cache only
-        ib.sleep(2)
-        ibkr_positions = ib.positions(account=ACCOUNT)
+        # Read the list reqPositions() RETURNS — not ib.positions(), which is
+        # ib_insync's accumulating cache. That cache fills asynchronously, so a
+        # slow gateway hands back an empty result indistinguishable from a flat
+        # account, and it only drops a contract when IBKR sends an explicit zero,
+        # which an assigned or expired option never gets (the ghost-position bug
+        # of 2026-08-22, fixed in api.py then and here now). reqPositions() blocks
+        # until IBKR's positionEnd, so what it returns is a COMPLETE answer to
+        # this request — which is what lets the guard below trust an empty read
+        # rather than treat every empty read as a possible failure.
+        raw_positions = [
+            p for p in (ib.reqPositions() or [])
+            if not (ACCOUNT and p.account != ACCOUNT) and int(p.position or 0) != 0
+        ]
         stock_positions = {
             p.contract.symbol: int(p.position)
-            for p in ibkr_positions
+            for p in raw_positions
             if p.contract.secType == "STK" and int(p.position) > 0
         }
         # IBKR's premium-netted avgCost is the source of truth for cost basis
@@ -764,13 +774,29 @@ def detect_assignments(dry_run: bool = False) -> dict:
         # state.json is always reconstructable from the broker on the next run.
         avg_cost_lookup = {
             p.contract.symbol: round(p.avgCost, 2)
-            for p in ibkr_positions
+            for p in raw_positions
             if p.contract.secType == "STK" and int(p.position) > 0
         }
+        # One case stays ambiguous: an account that is genuinely flat returns
+        # nothing, and so does a read that failed. GrossPositionValue comes from a
+        # DIFFERENT request, so it is an independent second opinion — 0 confirms
+        # flat. Only fetched when it is actually needed.
+        gross_position_value = None
+        if not raw_positions:
+            try:
+                gross_position_value = next(
+                    (float(v.value) for v in ib.accountSummary(ACCOUNT)
+                     if v.tag == "GrossPositionValue"), None)
+                log.info(f"  🔎 IBKR returned no open positions — "
+                         f"GrossPositionValue = {gross_position_value}")
+            except Exception as e:
+                log.warning(f"  ⚠️  Could not read GrossPositionValue to confirm "
+                            f"a flat account: {e}")
     finally:
         ib.disconnect()
 
-    log.info(f"📊 Found {len(stock_positions)} stock position(s) in IBKR")
+    log.info(f"📊 Found {len(stock_positions)} stock position(s) in IBKR "
+             f"({len(raw_positions)} open position(s) of any type)")
 
     # Identify holdings whose CC expired and are no longer in IBKR — called away.
     # CC expiry is stored as "YYYYMMDD"; compare against today in the same format.
@@ -778,7 +804,14 @@ def detect_assignments(dry_run: bool = False) -> dict:
     called_away   = []
     for ticker, h in existing_holdings.items():
         cc_expiry = h.get("current_cc_expiry")
-        if (h.get("cc_status") in ("open", "partial")
+        # Gated on shares + an EXPIRED CC, deliberately NOT on cc_status. A CC that
+        # failed to be written this week leaves LAST week's expired CC sitting in
+        # current_cc_* — and those shares were still called away by it. Requiring
+        # status "open"/"partial" meant a single failed CC order froze a holding in
+        # state permanently: on 2026-09-08 BE was called away Friday at $212.50,
+        # Monday's CC against the phantom shares was rejected, cc_status flipped to
+        # "failed", and from then on nothing could explain the holding's absence.
+        if (h.get("shares", 0) > 0
                 and cc_expiry
                 and cc_expiry <= today_str
                 and ticker not in stock_positions):
@@ -792,19 +825,44 @@ def detect_assignments(dry_run: bool = False) -> dict:
                      f"CC premium ${cc_premium:,.0f}")
             called_away.append({**h, "_stock_pnl": stock_pnl})
 
-    called_away_tickers = {h["ticker"] for h in called_away}
+    # Rows already at 0 shares are not missing data. Every sell path sets
+    # shares = 0 and LEAVES the row behind, so they accumulate. IBKR having no
+    # position for one is not a discrepancy, it is agreement — and counting them
+    # against the guard below is what made it self-perpetuating: they tripped the
+    # bail, and the bail returned before the rebuild that would have purged them,
+    # so they tripped it again on every later run. On 2026-09-08 four such
+    # rows (NBIS, IREN, CRDO, ASTS) stopped a box from ever recording that BE had
+    # been called away, leaving 200 phantom shares that tied up $43,000 and a
+    # position slot and drew a rejected covered call every Monday.
+    purged = [t for t, h in existing_holdings.items()
+              if h.get("shares", 0) <= 0 and t not in stock_positions]
 
-    # Safety guard: bail only if IBKR shows 0 positions AND there are holdings
-    # that are NOT explained by an expired CC (i.e., data may be unreliable).
-    unexplained = [t for t in existing_holdings
-                   if t not in stock_positions and t not in called_away_tickers]
-    if not stock_positions and unexplained:
-        log.error(f"❌ IBKR returned 0 stock positions but {len(unexplained)} "
-                  f"holding(s) have no expired CC to explain their absence — "
-                  f"skipping save to avoid data loss: {unexplained}")
+    # Everything this read would REMOVE: rows that still hold shares and did not
+    # come back from the broker. The guard is written against this set, not
+    # against the subset that looks unexplainable, because a bad read makes a
+    # holding look called away just as readily as it makes one look vanished —
+    # an expired cc_expiry sitting in state is not evidence the read was good.
+    dropped = [t for t, h in existing_holdings.items()
+               if t not in stock_positions and h.get("shares", 0) > 0]
+
+    # Safety guard, narrowed: bail only when the broker told us NOTHING AT ALL.
+    # The old test fired whenever the STOCK subset was empty, which threw away a
+    # perfectly good read — on 2026-09-08 the very same request returned four open
+    # short puts, so IBKR had plainly answered; it just answered "no stock". A
+    # genuinely flat account also returns nothing, so that case is confirmed
+    # against GrossPositionValue before acting on it; if that confirmation could
+    # not be made (None), we still refuse to save, exactly as before.
+    account_is_flat = (gross_position_value == 0.0)
+    if not raw_positions and dropped and not account_is_flat:
+        log.error(f"❌ IBKR returned no open positions at all, and that could not be "
+                  f"confirmed as a flat account — refusing to drop {len(dropped)} "
+                  f"holding(s) with live shares: {dropped}")
         return {"called_away": [], "new_assignments": [], "share_corrections": [],
-                "dropped": [], "dry_run": dry_run, "bailed": True,
-                "unexplained": unexplained}
+                "dropped": [], "purged": [], "dry_run": dry_run, "bailed": True,
+                "unexplained": dropped}
+    if not raw_positions and dropped:
+        log.warning(f"  ✅ Account confirmed flat (GrossPositionValue 0) — clearing "
+                    f"{len(dropped)} holding(s) the broker no longer reports: {dropped}")
 
     updated           = []
     new_assignments   = []
@@ -813,7 +871,6 @@ def detect_assignments(dry_run: bool = False) -> dict:
     # scheduled detection is failing (exactly how a broken self-heal stayed
     # invisible for a month — see _soft_restart_ibgateway).
     share_corrections = []
-    dropped           = [t for t in existing_holdings if t not in stock_positions]
     for ticker, shares in stock_positions.items():
         if ticker in existing_holdings:
             h            = _ensure_tranches(existing_holdings[ticker])
@@ -908,7 +965,8 @@ def detect_assignments(dry_run: bool = False) -> dict:
     else:
         _save_state(state)
         log.info(f"\n💾 Saved {len(updated)} wheel holding(s) to state.json "
-                 f"({len(called_away)} called away, {len(new_assignments)} new assignment(s))")
+                 f"({len(called_away)} called away, {len(new_assignments)} new "
+                 f"assignment(s), {len(purged)} stale 0-share row(s) purged)")
     log.info("=" * 65)
     # Discord alert for new assignments. (Previously dead code: it sat after the
     # return below and never fired — fixed alongside the tranche rewrite.)
@@ -919,6 +977,9 @@ def detect_assignments(dry_run: bool = False) -> dict:
         "new_assignments":   new_assignments,
         "share_corrections": share_corrections,
         "dropped":           dropped,
+        # Stale 0-share rows cleared out this pass. Reported separately from
+        # `dropped` because they are housekeeping, not broker drift.
+        "purged":            purged,
         "dry_run":           dry_run,
         # The reconciled holdings, so a DRY RUN (which deliberately does not
         # persist) can still hand the corrected picture to the caller. Without
@@ -1080,9 +1141,13 @@ def run_wheel_check(dry_run: bool = False, client_id: int = None,
     try:
         # ── Step 0: Sync against live IBKR stock positions ────
         # Catches assignments that detect_assignments() may have missed on Friday.
-        ib.reqPositions()
-        ib.sleep(2)
-        live_pos      = ib.positions(account=ACCOUNT)
+        # Same read as detect_assignments: the list reqPositions() RETURNS, never
+        # ib.positions()' cache — see the note there. This snapshot decides which
+        # shares are already covered and which CSPs are already open, so a stale
+        # or half-filled cache here is what makes a re-run write a duplicate.
+        live_pos      = [p for p in (ib.reqPositions() or [])
+                         if not (ACCOUNT and p.account != ACCOUNT)
+                         and int(p.position or 0) != 0]
         strike_lookup = {p["ticker"]: p["strike"] for p in state.get("positions", [])}
         known_tickers = {h["ticker"] for h in holdings}
         # IBKR avgCost is the authoritative cost basis (see the cost-basis note

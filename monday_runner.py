@@ -189,6 +189,13 @@ def _reconcile_before_run(dry_run: bool = False) -> dict:
     weekend job is failing — the same way a broken soft restart stayed invisible
     for a month because the fallback always recovered things.
 
+    The bail is deliberately narrow (v5.2.113). It used to fire whenever IBKR
+    reported no STOCK, which is also what a correct read of a CSP-only week looks
+    like — and because it returned before the rebuild, the stale rows that
+    triggered it survived to trigger it again. It now fires only when the broker
+    returned nothing at all and that emptiness could not be confirmed against
+    GrossPositionValue.
+
     Never fatal: on error it logs and lets the run proceed, which is exactly the
     behaviour that exists today. A reconcile that could abort Monday would be a
     worse failure than the drift it prevents.
@@ -208,7 +215,11 @@ def _reconcile_before_run(dry_run: bool = False) -> dict:
                 _discord_alert(msg)
             return result
 
-        drift = (result.get("share_corrections") or []) + (result.get("new_assignments") or [])
+        drift  = (result.get("share_corrections") or []) + (result.get("new_assignments") or [])
+        purged = result.get("purged") or []
+        if purged:
+            log.info(f"  🧹 Cleared {len(purged)} stale 0-share holding(s): "
+                     f"{', '.join(purged)}")
         if drift or result.get("dropped"):
             bits = []
             for c in result.get("share_corrections", []):
@@ -217,6 +228,8 @@ def _reconcile_before_run(dry_run: bool = False) -> dict:
                 bits.append(f"{h['ticker']} +{h['shares']} (new assignment)")
             for t in result.get("dropped", []):
                 bits.append(f"{t} no longer held")
+            for t in purged:
+                bits.append(f"{t} stale 0-share row cleared")
             detail = "; ".join(bits)
             log.warning(f"  ⚠️  State was STALE — reconciled from IBKR: {detail}")
             if not dry_run:
