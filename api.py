@@ -139,6 +139,8 @@ _watchdog_state: dict = {
                                           # this episode. Deliberately NOT last_ibkr_alert:
                                           # that key latches self-heal OFF until recovery.
     "gateway_restart_window_note_at": None,  # same, for the port-down path
+    "ibkr_reset_hold_at": None,   # when we first held off because IBKR was mid-reset;
+                                  # only used to explain a fall-through in the alert text
 }
 _gateway_login_status: str = "unknown"
 _gateway_last_event:   str = ""
@@ -175,6 +177,36 @@ AUTO_RESTART_PATIENCE = 900   # seconds an outage may look like "just the nightl
                               # for 30.5h and 35h with only a "this is likely the scheduled
                               # daily restart" notice. The 35h outage swallowed that box's
                               # Monday 08-17 CSP run.
+# IBKR's OWN nightly server reset — 23:45-00:45 ET, every night, weekends included.
+# Like the ET constant above this is a fact about the broker, not an operator
+# preference, so it is baked in rather than added to Settings.
+#
+# During it the gateway stays logged in and its API port stays OPEN, but requests
+# never answer, so _get_ibkr_data() blocks past IBKR_PROBE_TIMEOUT and every later
+# poll reports "previous IBKR probe still running". The watchdog used to read that
+# as a wedge and run its self-heal ladder against a scheduled outage. On a soft
+# restart it appeared to work — but only because the window ended on its own. When
+# the restarts landed while IBKR was still resetting, nothing could clear it, each
+# escalation forced a FRESH login, and on live that means an IB Key 2FA push at
+# ~9:50 PM: on 2026-09-04 four pushes went unanswered and the live box sat down for
+# 896 min (14.9 h). Paper never showed the damage because a full restart there
+# re-logs in with no 2FA.
+#
+# Confirmed IBKR-side on 2026-09-07: the live box and the paper box — different
+# Macs, accounts, gateways, login sessions and independently-drifting poll grids —
+# fired within the 300s poll grid on 12 of 13 nights (median 39s), and on 08-28
+# BOTH ran ~15 min late together, 17s apart. They also sit on DIFFERENT
+# auto_restart_time settings (11:59 PM vs 07:00 AM), which rules out the gateway's
+# own restart as the cause.
+IBKR_RESET_START_ET = (23, 45)
+IBKR_RESET_END_ET   = (0, 45)
+IBKR_RESET_PATIENCE = 1800  # seconds an outage may be excused as "just IBKR's nightly
+                            # reset" before the watchdog stops holding off and treats
+                            # it as a real fault. Bounded for the same reason
+                            # AUTO_RESTART_PATIENCE is: an unbounded excuse turns a
+                            # blip into a multi-day outage. The window itself is 60
+                            # min, so this cannot mask a fault beyond its own end.
+
 FULL_RESTART_COOLDOWN = 1800  # min seconds between auto full restarts of the gateway.
                               # Lockout guard: combined with the one-shot-per-episode
                               # cap, the watchdog can never loop fresh logins into an
@@ -259,6 +291,26 @@ def _in_auto_restart_window(now: datetime) -> bool:
         return False
     except Exception:
         return False
+
+def _in_ibkr_reset_window(now: datetime) -> bool:
+    """Return True during IBKR's nightly server reset (see IBKR_RESET_* above).
+
+    Distinct from _in_auto_restart_window(), which covers OUR gateway's configured
+    restart: that one is operator-set and read from settings, this one is IBKR's and
+    is fixed in Eastern time regardless of where the box sits.
+    """
+    try:
+        et = now.astimezone(ET)
+        sh, sm = IBKR_RESET_START_ET
+        eh, em = IBKR_RESET_END_ET
+        start = et.replace(hour=sh, minute=sm, second=0, microsecond=0)
+        end   = et.replace(hour=eh, minute=em, second=0, microsecond=0)
+        if (sh, sm) <= (eh, em):          # window inside one ET day
+            return start <= et <= end
+        return et >= start or et <= end   # window straddles ET midnight
+    except Exception:
+        return False
+
 
 app = FastAPI(title="YRVI Dashboard API")
 app.add_middleware(
@@ -1049,9 +1101,14 @@ def _watchdog_check() -> None:
         docker_st = _get_docker_container_state()
         c_exit    = docker_st["exit_code"]
         login_st  = _gateway_login_status
+        #   • in IBKR's nightly server reset → a restart cannot help (the outage is
+        #     upstream) and on live it costs an unattended 2FA push; bounded by
+        #     IBKR_RESET_PATIENCE for the same reason the window above is.
         no_restart = (c_exit == 4 or login_st in ("locked", "failed")
                       or (_in_auto_restart_window(now)
-                          and down_sec < AUTO_RESTART_PATIENCE))
+                          and down_sec < AUTO_RESTART_PATIENCE)
+                      or (_in_ibkr_reset_window(now)
+                          and down_sec < IBKR_RESET_PATIENCE))
 
         if (down_sec >= alert_threshold
                 and _watchdog_state["last_gateway_alert"] is None
@@ -1122,6 +1179,17 @@ def _watchdog_check() -> None:
                         f"Update credentials in the dashboard Settings page, then restart the gateway.\n"
                         f"🔴 `{_compose_hint('restart', 'ib_gateway')}`"
                     )
+                elif _in_ibkr_reset_window(now):
+                    # IBKR's nightly server reset. SILENT on purpose: this fires every
+                    # night on every box, it is not actionable, and paging for it
+                    # trained the operator to ignore the one channel that also carries
+                    # real gateway faults. The stdout line keeps it observable, and if
+                    # it outlasts IBKR_RESET_PATIENCE the branches above take over and
+                    # page at full volume. Like the branch below it does NOT latch
+                    # last_gateway_alert, so self-heal re-arms when the bound expires.
+                    print(f"[api/watchdog] gateway port down {mins} min inside IBKR's "
+                          f"nightly server reset — holding off self-heal "
+                          f"(bound {IBKR_RESET_PATIENCE // 60} min)")
                 else:  # auto-restart window, still inside AUTO_RESTART_PATIENCE
                     # Deliberately does NOT latch last_gateway_alert — that would gate
                     # the restart branch above off for the rest of the episode, so a
@@ -1214,6 +1282,12 @@ def _watchdog_check() -> None:
             # process (no 2FA, no container bounce). So self-heal FIRST and only
             # page a human if that fails. State machine, all gated on a persistent
             # outage (>= ALERT_THRESHOLD) and firing each step once per outage:
+            #   0. in IBKR's OWN nightly server reset AND still inside
+            #      IBKR_RESET_PATIENCE → hold off self-heal and stay SILENT. The
+            #      outage is upstream, no restart can clear it, and on live every
+            #      escalation costs an unattended IB Key push. Checked FIRST because
+            #      it is the one cause where acting is strictly worse than waiting.
+            #      Like step 1 it must NOT set last_ibkr_alert.
             #   1. in the auto-restart window AND still inside AUTO_RESTART_PATIENCE →
             #      hold off self-heal (the gateway is genuinely cycling) and post ONE
             #      informational notice. This must NOT set last_ibkr_alert: that key
@@ -1227,7 +1301,13 @@ def _watchdog_check() -> None:
             #      without the command server), page a human immediately.
             #   3. soft restart didn't recover within the grace window → escalate.
             if down_sec >= alert_threshold and _watchdog_state["last_ibkr_alert"] is None:
-                if _in_auto_restart_window(now) and down_sec < AUTO_RESTART_PATIENCE:
+                if _in_ibkr_reset_window(now) and down_sec < IBKR_RESET_PATIENCE:
+                    if _watchdog_state["ibkr_reset_hold_at"] is None:
+                        _watchdog_state["ibkr_reset_hold_at"] = now
+                    print(f"[api/watchdog] IBKR API down {int(down_sec / 60)} min inside "
+                          f"IBKR's nightly server reset (`{err}`) — holding off self-heal "
+                          f"and staying silent (bound {IBKR_RESET_PATIENCE // 60} min)")
+                elif _in_auto_restart_window(now) and down_sec < AUTO_RESTART_PATIENCE:
                     if _watchdog_state["ibkr_restart_window_note_at"] is None:
                         _watchdog_state["ibkr_restart_window_note_at"] = now
                         _send_discord_alert(
@@ -1239,12 +1319,18 @@ def _watchdog_check() -> None:
                             f"and report what it did — no action needed yet."
                         )
                 elif soft_at is None:
+                    # If we held off above and it still got here, the outage has
+                    # outlasted IBKR's reset window — say so, or the operator reads a
+                    # bare "unreachable for 30 min" with no hint why we waited.
+                    held = ("This began during IBKR's nightly server reset and has now "
+                            "outlasted it, so it is being treated as a real fault. "
+                            if _watchdog_state["ibkr_reset_hold_at"] else "")
                     soft_ok, soft_why = _soft_restart_ibgateway()
                     if soft_ok:
                         _watchdog_state["ibkr_soft_restart_at"] = now
                         _send_discord_alert(
                             f"🔄 **YRVI** IBKR API unreachable for {int(down_sec / 60)} min "
-                            f"(`{err}`). Auto-recovery: sent an IB Gateway soft restart "
+                            f"(`{err}`). {held}Auto-recovery: sent an IB Gateway soft restart "
                             f"(reuses the session — no login, no 2FA). Confirming recovery "
                             f"or escalating in ~{SOFT_RESTART_GRACE // 60} min…"
                         )
@@ -1399,6 +1485,7 @@ def _watchdog_check() -> None:
             _watchdog_state["ibkr_full_restart_at"] = None
             _watchdog_state["ibkr_cold_restart_at"] = None
             _watchdog_state["ibkr_restart_window_note_at"] = None
+            _watchdog_state["ibkr_reset_hold_at"] = None
     else:
         # Gateway port is down — clear IBKR state; its episode timer resets when port returns
         _watchdog_state["ibkr_down_since"] = None
@@ -1407,6 +1494,7 @@ def _watchdog_check() -> None:
         _watchdog_state["ibkr_full_restart_at"] = None
         _watchdog_state["ibkr_cold_restart_at"] = None
         _watchdog_state["ibkr_restart_window_note_at"] = None
+        _watchdog_state["ibkr_reset_hold_at"] = None
 
     # ── Scheduler heartbeat ───────────────────────────────────────
     sched_ok = _scheduler_pid() is not None
