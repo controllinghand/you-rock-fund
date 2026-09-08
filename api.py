@@ -312,6 +312,35 @@ def _in_ibkr_reset_window(now: datetime) -> bool:
         return False
 
 
+def _restart_window_excuse_holds(now: datetime, down_sec: float) -> bool:
+    """True while an outage may still be excused as the gateway's OWN scheduled restart.
+
+    The window plus AUTO_RESTART_PATIENCE was not enough on its own. A restart that
+    is genuinely in progress leaves IBC's command server answering — it comes back
+    with the relaunched JVM. A JVM that WEDGED during its restart keeps its sockets
+    bound and stops servicing them, so the command server goes silent. That is not a
+    gateway cycling normally, and waiting out the patience bound only delays the one
+    remedy that works (a container restart), because the soft path runs inside the
+    frozen process by construction.
+
+    Observed on the paper box, whose 07:00 AM scheduled restart wedges the gateway
+    most days: 2026-09-02 07:44 the probe returned hung and the full restart that
+    followed recovered it immediately — ten minutes of the patience hold-off had
+    already been spent excusing a JVM that was never coming back on its own.
+
+    Only "hung" defeats the excuse. "unknown" (docker exec itself failed, e.g. the
+    container is down) deliberately does NOT: an unreadable probe is not evidence,
+    and the safe reading of no evidence is to keep waiting.
+    """
+    if not _in_auto_restart_window(now) or down_sec >= AUTO_RESTART_PATIENCE:
+        return False
+    if _ibc_command_server_state() == "hung":
+        print("[api/watchdog] inside the auto-restart window, but IBC's command server "
+              "is hung — the JVM is wedged, not cycling; not excusing this outage")
+        return False
+    return True
+
+
 app = FastAPI(title="YRVI Dashboard API")
 app.add_middleware(
     CORSMiddleware,
@@ -1095,9 +1124,10 @@ def _watchdog_check() -> None:
         #   • locked   → account locked; restarting risks a deeper lockout
         #   • failed   → wrong password; restarting just loops failed logins → lockout
         #   • in the auto-restart window → gateway is already cycling on its own,
-        #     but only for AUTO_RESTART_PATIENCE: a restart that hasn't come back by
-        #     then is a fault, not a restart, and excusing it forever is what caused
-        #     the 30h+ outages this guard is now bounded to prevent.
+        #     but only for AUTO_RESTART_PATIENCE, and only while IBC's command server
+        #     still answers: a restart that hasn't come back by then is a fault, not a
+        #     restart, and excusing it forever is what caused the 30h+ outages this
+        #     guard is now bounded to prevent (see _restart_window_excuse_holds).
         docker_st = _get_docker_container_state()
         c_exit    = docker_st["exit_code"]
         login_st  = _gateway_login_status
@@ -1105,8 +1135,7 @@ def _watchdog_check() -> None:
         #     upstream) and on live it costs an unattended 2FA push; bounded by
         #     IBKR_RESET_PATIENCE for the same reason the window above is.
         no_restart = (c_exit == 4 or login_st in ("locked", "failed")
-                      or (_in_auto_restart_window(now)
-                          and down_sec < AUTO_RESTART_PATIENCE)
+                      or _restart_window_excuse_holds(now, down_sec)
                       or (_in_ibkr_reset_window(now)
                           and down_sec < IBKR_RESET_PATIENCE))
 
@@ -1190,7 +1219,7 @@ def _watchdog_check() -> None:
                     print(f"[api/watchdog] gateway port down {mins} min inside IBKR's "
                           f"nightly server reset — holding off self-heal "
                           f"(bound {IBKR_RESET_PATIENCE // 60} min)")
-                else:  # auto-restart window, still inside AUTO_RESTART_PATIENCE
+                else:  # auto-restart window, inside patience, JVM still answering
                     # Deliberately does NOT latch last_gateway_alert — that would gate
                     # the restart branch above off for the rest of the episode, so a
                     # nightly restart that never came back would never be self-healed.
@@ -1288,7 +1317,8 @@ def _watchdog_check() -> None:
             #      escalation costs an unattended IB Key push. Checked FIRST because
             #      it is the one cause where acting is strictly worse than waiting.
             #      Like step 1 it must NOT set last_ibkr_alert.
-            #   1. in the auto-restart window AND still inside AUTO_RESTART_PATIENCE →
+            #   1. still excusable as our own scheduled restart (in the window, inside
+            #      AUTO_RESTART_PATIENCE, and IBC's command server still answering) →
             #      hold off self-heal (the gateway is genuinely cycling) and post ONE
             #      informational notice. This must NOT set last_ibkr_alert: that key
             #      gates the whole block below and is only cleared on recovery or a
@@ -1307,7 +1337,7 @@ def _watchdog_check() -> None:
                     print(f"[api/watchdog] IBKR API down {int(down_sec / 60)} min inside "
                           f"IBKR's nightly server reset (`{err}`) — holding off self-heal "
                           f"and staying silent (bound {IBKR_RESET_PATIENCE // 60} min)")
-                elif _in_auto_restart_window(now) and down_sec < AUTO_RESTART_PATIENCE:
+                elif _restart_window_excuse_holds(now, down_sec):
                     if _watchdog_state["ibkr_restart_window_note_at"] is None:
                         _watchdog_state["ibkr_restart_window_note_at"] = now
                         _send_discord_alert(
