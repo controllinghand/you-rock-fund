@@ -367,6 +367,10 @@ def run_pipeline():
     dropped CC premium from the weekly total and made the pipeline over-fill CSP
     slots against capital already tied up in wheel stock. Chaining them (the same
     sequence as monday_runner.run_monday / the dashboard's Run Now) removes the race.
+
+    This duplicates run_monday's sequence rather than calling it, which is how the
+    reconcile went missing here for six versions. Anything added to one belongs in
+    the other until they are merged.
     """
     loop = _new_loop()
     now  = datetime.now(PST)
@@ -419,12 +423,28 @@ def run_pipeline():
     _sched_progress(ticker=None, stage="starting wheel check")
 
     try:
+        # ── Step 0: reconcile state.json against live IBKR ────────
+        # The docstring above claims this job runs "the same sequence as
+        # monday_runner.run_monday / the dashboard's Run Now". That stopped being
+        # true when the reconcile was added in v5.2.78 and nobody noticed, because
+        # the drift alert only ever fired on the path that had it — so the
+        # SCHEDULED Monday run, the one that actually trades unattended every
+        # week, was the only path still trading on whatever state.json said. A box
+        # whose weekend detection failed could only be healed by a human clicking
+        # Run Now. Restoring parity here (v5.2.114).
+        from monday_runner import _reconcile_before_run
+        _sched_progress(ticker=None, stage="reconciling positions")
+        reconcile = _reconcile_before_run(dry_run=False)
+
         # ── Step 1: wheel check (stop-loss sells + covered calls) ──
         # Its return dict IS the pipeline context (skip_tickers, freed_capital,
         # reserved_capital, active_wheel_count, cc_premium, shares_sold_pnl, …).
         # progress_callback streams per-ticker CC/sell activity to the feed.
+        # holdings_override hands over the freshly reconciled picture, exactly as
+        # run_monday does — None on the bail, which correctly falls back to state.
         from wheel_manager import run_wheel_check
-        context = run_wheel_check(progress_callback=_sched_progress)
+        context = run_wheel_check(progress_callback=_sched_progress,
+                                  holdings_override=reconcile.get("holdings"))
         log.info(f"✅ Wheel check done — freed ${context['freed_capital']:,.0f}  "
                  f"reserved ${context['reserved_capital']:,.0f}  skip {context['skip_tickers'] or 'none'}")
 

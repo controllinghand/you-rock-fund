@@ -715,7 +715,7 @@ def _set_cc_coverage(h: dict, *, strike, expiry, premium, covered: int, needed: 
 
 # ── Public API ─────────────────────────────────────────────────
 
-def detect_assignments(dry_run: bool = False) -> dict:
+def detect_assignments(dry_run: bool = False, persist: bool = None) -> dict:
     """
     Saturday 8AM PST — scan IBKR for stock positions and reconcile
     against known wheel_holdings. Runs Saturday morning (not Friday
@@ -725,8 +725,15 @@ def detect_assignments(dry_run: bool = False) -> dict:
     Holdings whose CC has expired and are no longer in IBKR are
     recognized as called away and removed from wheel_holdings.
 
+    persist: whether to WRITE the reconciled picture. Defaults to `not dry_run`,
+    the historical behaviour. The reconcile caller passes persist=True even on a
+    preview, because syncing the cache to the broker is not a trade — it places no
+    orders and changes no decision, it just stops state.json lying. That is what
+    lets Run Screener heal a stale holding rather than only report one.
+
     Returns list of called-away holding dicts (may be empty).
     """
+    persist = (not dry_run) if persist is None else persist
     log.info("\n" + "=" * 65)
     log.info(f"🔍 SATURDAY ASSIGNMENT DETECTION — "
              f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -968,7 +975,7 @@ def detect_assignments(dry_run: bool = False) -> dict:
     # persisted it, so the shares half of the wheel never reached weekly_pnl or the
     # YTD tracker. The bucket is drained (and cleared) by _write_weekly_pnl, which
     # is what keeps it from being counted twice across Saturday + Monday + re-runs.
-    if called_away and not dry_run:
+    if called_away and persist:
         pending = state.get("pending_called_away") or []
         already = {(e.get("ticker"), e.get("cc_expiry")) for e in pending}
         for h in called_away:
@@ -986,7 +993,7 @@ def detect_assignments(dry_run: bool = False) -> dict:
             })
         state["pending_called_away"] = pending
 
-    if dry_run:
+    if not persist:
         log.info(f"\n🟡 [DRY RUN] would save {len(updated)} wheel holding(s) — "
                  f"state.json NOT written")
     else:
@@ -997,7 +1004,11 @@ def detect_assignments(dry_run: bool = False) -> dict:
     log.info("=" * 65)
     # Discord alert for new assignments. (Previously dead code: it sat after the
     # return below and never fired — fixed alongside the tranche rewrite.)
-    if new_assignments and not dry_run:
+    # Gated on persist, not dry_run: whichever pass actually RECORDS the adoption
+    # is the one that must announce it. A preview that persisted and stayed quiet
+    # would swallow the alert outright — the next run no longer sees the holding
+    # as new, so nothing would ever say "you were assigned".
+    if new_assignments and persist:
         discord_poster.post_assignment_alert(new_assignments)
     return {
         "called_away":       called_away,
@@ -1008,6 +1019,9 @@ def detect_assignments(dry_run: bool = False) -> dict:
         # `dropped` because they are housekeeping, not broker drift.
         "purged":            purged,
         "dry_run":           dry_run,
+        # Whether the picture below was actually WRITTEN. A preview that healed
+        # state persisted; a preview that only reported did not.
+        "persisted":         persist,
         # The reconciled holdings, so a DRY RUN (which deliberately does not
         # persist) can still hand the corrected picture to the caller. Without
         # this the preview re-reads the stale file from disk and shows Monday

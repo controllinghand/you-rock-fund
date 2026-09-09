@@ -203,7 +203,16 @@ def _reconcile_before_run(dry_run: bool = False) -> dict:
 
     Runs unconditionally rather than on a staleness heuristic: it is idempotent
     (a clean box logs "existing — unchanged"), costs ~3s, and a heuristic is one
-    more thing to get wrong. Honors dry_run so a preview stays non-mutating.
+    more thing to get wrong.
+
+    It PERSISTS on a preview too (v5.2.114). "Dry run" means places no orders and
+    changes no decision — and correcting the cache to match the broker is neither.
+    It is bookkeeping the broker already did. Leaving Run Screener unable to heal
+    meant a box could show the operator exactly what was wrong, repeatedly, and
+    still need a live run to fix it. NOTE for anyone testing with a hand-seeded
+    holding in state.json: Run Screener will now clear it, because IBKR does not
+    have it. Seed a name the account really holds, or expect it to be reconciled
+    away.
 
     Drift is ALERTED, not just fixed. Healing quietly would hide that the
     weekend job is failing — the same way a broken soft restart stayed invisible
@@ -223,16 +232,22 @@ def _reconcile_before_run(dry_run: bool = False) -> dict:
     try:
         from wheel_manager import detect_assignments
         log.info("🔄 Reconciling wheel holdings against live IBKR positions…")
-        result = detect_assignments(dry_run=dry_run)
+        # persist=True even on a preview — see the docstring.
+        result = detect_assignments(dry_run=dry_run, persist=True)
+        # Alerts fire on whichever pass actually wrote the correction, preview or
+        # not: it is the write that needs a witness. Tagged so the reader can tell
+        # a preview-driven heal from a Monday one.
+        tag = " (Run Screener)" if dry_run else ""
 
         if result.get("bailed"):
-            msg = (f"⚠️ **YRVI** Monday reconcile INCONCLUSIVE — IBKR returned 0 stock "
-                   f"positions but {len(result.get('unexplained', []))} holding(s) are "
-                   f"unexplained: {', '.join(result.get('unexplained', []))}. State left "
-                   f"untouched; the run continues on the existing picture. Verify positions.")
+            msg = (f"⚠️ **YRVI** Monday reconcile{tag} INCONCLUSIVE — IBKR returned no "
+                   f"open positions at all and that could not be confirmed as a flat "
+                   f"account, so {len(result.get('unexplained', []))} holding(s) with "
+                   f"shares were left alone: {', '.join(result.get('unexplained', []))}. "
+                   f"State untouched; the run continues on the existing picture. "
+                   f"Verify positions.")
             log.error(f"  ❌ {msg}")
-            if not dry_run:
-                _discord_alert(msg)
+            _discord_alert(msg)
             return result
 
         drift  = (result.get("share_corrections") or []) + (result.get("new_assignments") or [])
@@ -252,13 +267,12 @@ def _reconcile_before_run(dry_run: bool = False) -> dict:
                 bits.append(f"{t} stale 0-share row cleared")
             detail = "; ".join(bits)
             log.warning(f"  ⚠️  State was STALE — reconciled from IBKR: {detail}")
-            if not dry_run:
-                _discord_alert(
-                    f"⚠️ **YRVI** Monday reconcile corrected a stale state.json before "
-                    f"trading: {detail}.\nThis means the weekend assignment detection did "
-                    f"not run or did not complete — worth checking why, since Monday only "
-                    f"caught it by re-checking."
-                )
+            _discord_alert(
+                f"⚠️ **YRVI** Monday reconcile{tag} corrected a stale state.json: "
+                f"{detail}.\nThis means the weekend assignment detection did not run or "
+                f"did not complete — worth checking why, since this only caught it by "
+                f"re-checking."
+            )
         else:
             log.info("  ✅ Holdings already match IBKR — no drift")
         return result

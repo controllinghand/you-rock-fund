@@ -53,7 +53,7 @@ directly — it is a symlink into `/data` and rotation would rename the link.
 |---|---|---|
 | Saturday 8:00AM | Assignment detection | `wheel_manager.detect_assignments()` |
 | Saturday 6:00PM | Screener preview | `screener` + `position_sizer` |
-| Monday 9:55AM | Wheel check → CSP pipeline (one chained job): stop loss sells + covered calls, then screen → size → execute | `scheduler.run_pipeline()` → `wheel_manager.run_wheel_check()` + `trader.execute_positions()` |
+| Monday 9:55AM | Reconcile vs IBKR → wheel check → CSP pipeline (one chained job): stop loss sells + covered calls, then screen → size → execute | `scheduler.run_pipeline()` → `monday_runner._reconcile_before_run()` + `wheel_manager.run_wheel_check()` + `trader.execute_positions()` |
 | Tue–Thu 9:00AM | Daily risk monitor | `risk_manager.run_daily_monitor()` |
 | Thu/Fri 12:30PM | Cash-sweep sell (last trading day only) | `cash_park.sell_park()` |
 
@@ -163,6 +163,18 @@ check's return dict is passed to the CSP pipeline in memory — no state.json
 hand-off, so the pipeline can never start before the wheel check finishes).
 
 ```
+Step 0 — reconcile (_reconcile_before_run):
+  → detect_assignments() re-reads live IBKR positions and rewrites wheel_holdings
+    (adopts new assignments, corrects share counts, books call-aways, purges stale
+    0-share rows). state.json is a CACHE; IBKR is the source of truth.
+  → runs on ALL THREE entry points — the scheduled Monday job, Run Now, and
+    Run Screener. It PERSISTS even on Run Screener: "dry run" means places no
+    orders, and correcting the cache to match the broker is not a trade.
+    ⚠️ So a hand-seeded test holding in state.json is cleared by any of them.
+  → hands the reconciled list to the wheel check as holdings_override
+  → only bails (leaving state untouched) when IBKR returns NO open positions at
+    all AND GrossPositionValue can't confirm the account is genuinely flat
+
 Step A — wheel_check (run_wheel_check):
   → call get_all_candidates() to get screener ticker set
   → Step 0b: if csp_only_mode → sell every UNCOVERED holding at market, skip all remaining
