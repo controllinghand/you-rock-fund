@@ -546,10 +546,14 @@ def _record_park_pnl(state: dict, realized: float) -> None:
     if not isinstance(wp, dict):
         return
     wp["park_pnl"] = round(realized, 2)
+    # Re-sum EVERY realized component, not just the ones that existed when this
+    # was written: this runs days after Monday and overwrites total_realized, so
+    # a component missing from this list is silently erased from the week.
     wp["total_realized"] = round(
         (wp.get("csp_premium") or 0.0)
         + (wp.get("cc_premium") or 0.0)
         + (wp.get("shares_sold_pnl") or 0.0)
+        + (wp.get("called_away_pnl") or 0.0)
         + realized, 2)
     wp["last_updated"] = datetime.now().isoformat()
 

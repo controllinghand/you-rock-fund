@@ -107,12 +107,32 @@ def _write_weekly_pnl(csp_premium: float, context: dict, fund_budget: float = 0,
     # A new week starts fresh at 0 (the ETF for that week hasn't been sold yet).
     park_pnl = prev.get("park_pnl", 0.0) if prev.get("week_start") == week_monday else 0.0
 
-    total_realized  = round(csp_premium + cc_premium + shares_sold_pnl + park_pnl, 2)
+    # Realized stock P&L from shares CALLED AWAY, queued by detect_assignments —
+    # Saturday's or this morning's. Draining the queue here (and clearing it in the
+    # same write) is what books it exactly once: detection runs up to twice a week
+    # and can re-run, but this assembly is the only place weekly_pnl is written.
+    # Booked into the week being assembled rather than the week the call-away
+    # happened, because that week's P&L is already closed and posted.
+    pending           = state.pop("pending_called_away", []) or []
+    called_away_pnl   = round(sum(e.get("stock_pnl", 0.0) for e in pending), 2)
+    if pending:
+        log.info(f"  📤 Booking called-away stock P&L ${called_away_pnl:+,.0f} from "
+                 f"{len(pending)} holding(s): "
+                 + ", ".join(f"{e['ticker']} ${e.get('stock_pnl', 0.0):+,.0f}"
+                             for e in pending))
+    # A same-week re-run drains an empty queue — carry the booked figure forward so
+    # it isn't zeroed, exactly as shares_sold_pnl and park_pnl are.
+    if not pending and prev.get("week_start") == week_monday:
+        called_away_pnl = prev.get("called_away_pnl", 0.0)
+
+    total_realized  = round(csp_premium + cc_premium + shares_sold_pnl
+                            + called_away_pnl + park_pnl, 2)
     state["weekly_pnl"] = {
         "week_start":      week_monday,
         "csp_premium":     round(csp_premium, 2),
         "cc_premium":      round(cc_premium, 2),
         "shares_sold_pnl": round(shares_sold_pnl, 2),
+        "called_away_pnl": called_away_pnl,
         "park_pnl":        round(park_pnl, 2),
         "total_realized":  total_realized,
         "last_updated":    datetime.now().isoformat(),
@@ -189,6 +209,13 @@ def _reconcile_before_run(dry_run: bool = False) -> dict:
     weekend job is failing — the same way a broken soft restart stayed invisible
     for a month because the fallback always recovered things.
 
+    The bail is deliberately narrow (v5.2.113). It used to fire whenever IBKR
+    reported no STOCK, which is also what a correct read of a CSP-only week looks
+    like — and because it returned before the rebuild, the stale rows that
+    triggered it survived to trigger it again. It now fires only when the broker
+    returned nothing at all and that emptiness could not be confirmed against
+    GrossPositionValue.
+
     Never fatal: on error it logs and lets the run proceed, which is exactly the
     behaviour that exists today. A reconcile that could abort Monday would be a
     worse failure than the drift it prevents.
@@ -208,7 +235,11 @@ def _reconcile_before_run(dry_run: bool = False) -> dict:
                 _discord_alert(msg)
             return result
 
-        drift = (result.get("share_corrections") or []) + (result.get("new_assignments") or [])
+        drift  = (result.get("share_corrections") or []) + (result.get("new_assignments") or [])
+        purged = result.get("purged") or []
+        if purged:
+            log.info(f"  🧹 Cleared {len(purged)} stale 0-share holding(s): "
+                     f"{', '.join(purged)}")
         if drift or result.get("dropped"):
             bits = []
             for c in result.get("share_corrections", []):
@@ -217,6 +248,8 @@ def _reconcile_before_run(dry_run: bool = False) -> dict:
                 bits.append(f"{h['ticker']} +{h['shares']} (new assignment)")
             for t in result.get("dropped", []):
                 bits.append(f"{t} no longer held")
+            for t in purged:
+                bits.append(f"{t} stale 0-share row cleared")
             detail = "; ".join(bits)
             log.warning(f"  ⚠️  State was STALE — reconciled from IBKR: {detail}")
             if not dry_run:

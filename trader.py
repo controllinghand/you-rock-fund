@@ -177,7 +177,19 @@ def _reconcile_results_against_broker(ib: IB, results: list, attempted: dict) ->
 
         # ── 2. Positions we hold but recorded as not filled ───────────
         try:
-            for p in ib.positions():
+            # Ask IBKR NOW — the list reqPositions() returns, never ib.positions().
+            # ib.positions() is a cache filled by the subscription ib_insync opens
+            # at connect; if that init request timed out (a degraded gateway, which
+            # is exactly the condition this reconcile exists for) it is empty, and
+            # an empty cache here reads as "no unrecorded fills" — the recovery
+            # goes quiet in the one case it was written for. On 2026-08-17 a socket
+            # death mid-run reported BE unfilled when it had filled at IBKR: $570
+            # of premium and $43k of collateral invisible, $25k over net liq. This
+            # request blocks until IBKR's positionEnd, so it is answered fresh, and
+            # it can't hand back a stale ghost the cache never dropped.
+            for p in (ib.reqPositions() or []):
+                if ACCOUNT and p.account != ACCOUNT:
+                    continue
                 c = p.contract
                 if c.secType != "OPT" or getattr(c, "right", "") != "P" or p.position >= 0:
                     continue

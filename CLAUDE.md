@@ -123,11 +123,19 @@ Each module connects with a distinct client ID to allow concurrent connections:
     "updated":         "ISO timestamp"
   },
 
+  "pending_called_away": [   // queued by detect_assignments, drained by the next
+                            // _write_weekly_pnl — books call-away P&L exactly once
+                            // whether Saturday or Monday's reconcile spotted it
+    {"ticker": "BE", "shares": 200, "assigned_strike": 215.0, "cc_strike": 212.5,
+     "cc_expiry": "20260904", "stock_pnl": -500.0, "detected": "ISO timestamp"}
+  ],
+
   "weekly_pnl": {
     "week_start":           "2026-04-27",
     "csp_premium":          4088,
     "cc_premium":           320,
     "shares_sold_pnl":      -4800,
+    "called_away_pnl":      -500,     // realized stock P&L on shares called away
     "park_pnl":             45,       // cash-sweep realized P&L (0 until sold Fri)
     "total_realized":       -347,
     "unrealized_stock_pnl": 2000,
@@ -215,6 +223,10 @@ All orders — CSPs, covered calls, stop loss sells — use the same escalation:
 - CSP liquidity gate is spread + OI-NOTIONAL floor (OI × strike × 100 ≥ min_oi_notional, default $1M),
   NOT a flat open-interest count — fairer to high-strike names
 - Freed capital from share sales is added to that week's CSP deployment budget
+- Called-away shares realize stock P&L too. detect_assignments queues it in
+  `pending_called_away`; `_write_weekly_pnl` drains and clears that queue, so it
+  books once into the week being assembled (not the week it happened, which is
+  already closed and posted) no matter which detection pass found it
 - Sold tickers are skipped in the same week's CSP screener
 - Daily monitor (Tue–Thu) alerts if a ticker drops from screener mid-week
 - Cash sweep (opt-in, default OFF) parks the week's undeployed remainder in QQQ (default) or SGOV
